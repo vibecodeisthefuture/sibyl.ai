@@ -1,0 +1,37 @@
+# ─── Stable Growth Engine (SGE) Configuration ───
+# 70% of portfolio capital — conservative, diversified, patient execution
+
+engine:
+  name: "SGE"
+  capital_allocation_pct: 0.70
+
+risk_policy:
+  active_policy: "MODERATE"        # CONSERVATIVE | MODERATE
+  kelly_fraction: 0.15
+  min_ev_threshold: 0.03           # +3%
+  min_confidence: 0.60
+  max_single_position_pct: 0.02    # 2% of engine capital
+  max_platform_exposure_pct: 0.25  # 25% of engine capital
+  max_total_exposure_pct: 0.55     # 55% of engine capital
+  circuit_breaker_drawdown_pct: 0.10   # -10% engine drawdown
+  daily_loss_limit_pct: 0.04       # -4% of engine capital
+  per_market_stop_loss_pct: 0.35   # exit at -35% of position value
+
+signal_whitelist:
+  - ARBITRAGE
+  - MEAN_REVERSION
+  - LIQUIDITY_VACUUM
+
+execution:
+  style: "patient"                 # patient limit orders
+  rebalance_trigger: "daily"
+  order_type: "limit"
+  limit_offset_bps: 50             # place limit 50bps inside spread
+
+category_caps:
+  politics: 0.12
+  sports: 0.20
+  crypto: 0.15
+  science_tech: 0.15
+  economics: 0.15
+  other: 0.10

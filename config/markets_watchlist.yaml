@@ -1,0 +1,10 @@
+# ─── Manually Curated High-Priority Markets ───
+# Markets listed here are always tracked regardless of breakout score.
+# Add market IDs from Polymarket or Kalshi that you want Sibyl to monitor.
+
+watchlist: []
+  # Example entry:
+  # - platform: polymarket
+  #   market_id: "0x..."
+  #   category: politics
+  #   notes: "2026 US presidential election"

@@ -1,0 +1,53 @@
+# ─── Breakout Scout Agent Configuration ───
+
+discovery:
+  poll_interval_minutes: 15
+  lookback_hours: 24
+  breakout_score_threshold: 52
+  freshness_skip_threshold: 0.40
+  score_weights:
+    volume_growth_rate: 0.35
+    odds_velocity: 0.30
+    listing_recency: 0.20
+    category_heat: 0.15
+  category_heat_multipliers:
+    active_election_cycle: 1.5
+    major_sporting_event: 1.4
+    active_fed_cycle: 1.3
+    standard: 1.0
+
+research:
+  phase1_timeout_seconds: 30
+  phase1_max_concurrent: 4
+  llm_synthesis_model: "claude-sonnet-4-6"
+  reddit_subreddits_always:
+    - PredictionMarkets
+  reddit_subreddits_by_category:
+    politics:
+      - politics
+      - worldnews
+      - PoliticalDiscussion
+    sports:
+      - sports
+      - nfl
+      - nba
+      - soccer
+    crypto:
+      - CryptoCurrency
+      - Bitcoin
+      - ethereum
+    economics:
+      - Economics
+      - finance
+      - investing
+    other:
+      - news
+  twitter_high_signal_min_likes: 100
+  news_lookback_days: 7
+  high_conviction_confidence_threshold: 0.55
+  moderate_confidence_threshold: 0.35
+
+freshness:
+  decay_interval_hours: 2
+  decay_amount_per_cycle: 0.15
+  active_position_reresearch_threshold: 0.30

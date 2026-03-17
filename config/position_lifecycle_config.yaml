@@ -1,0 +1,37 @@
+# ─── Position Lifecycle Manager Configuration ───
+# Sub-routines A (Stop Guard), B (EV Monitor), C (Exit Optimizer),
+# D (Resolution Tracker), E (Correlation Scanner)
+
+stop_guard:
+  poll_interval_seconds: 7
+  circuit_breaker_window_minutes: 15
+  circuit_breaker_stop_count: 3
+
+ev_monitor:
+  poll_interval_ace_seconds: 90
+  poll_interval_sge_seconds: 300
+  significant_ev_shift_threshold: 0.05
+
+exit_optimizer:
+  poll_interval_seconds: 120
+  ev_capture_threshold: 0.80
+  momentum_stall_cycles: 4
+  momentum_stall_threshold: 0.005
+
+resolution_tracker:
+  poll_interval_seconds: 300
+  convergence_yes_threshold: 0.85
+  convergence_no_threshold: 0.15
+  convergence_hours_window: 72
+  ace_opportunity_hours_window: 48
+  ace_opportunity_price_min: 0.60
+  ace_opportunity_price_max: 0.80
+
+correlation_scanner:
+  poll_interval_minutes: 10
+  event_exposure_alert_threshold_pct: 0.03
+  event_exposure_block_threshold_pct: 0.07
+  cross_engine_block_enabled: true
+  tradebot_cross_check_enabled: true
+  tradebot_cross_system_threshold_pct: 0.10
+  min_event_id_confidence: 0.50

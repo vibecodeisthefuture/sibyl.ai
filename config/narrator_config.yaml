@@ -1,0 +1,8 @@
+# ─── Portfolio Health Narrator Configuration ───
+
+schedule_cron: "0 */6 * * *"          # every 6 hours
+llm_model: "claude-haiku-4-5-20251001"
+notification_channel: "ntfy"
+ntfy_topic: "sibyl-health"
+max_digest_tokens: 550
+alert_escalation_threshold: 2          # immediate push if >= 2 active alerts

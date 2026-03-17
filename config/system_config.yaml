@@ -1,0 +1,38 @@
+# ─── Sibyl System Configuration ───
+# Global settings shared across all agents
+
+system:
+  name: "sibyl"
+  version: "0.1.0"
+  mode: "paper"  # paper | live
+  log_level: "INFO"
+  log_format: "json"
+
+database:
+  path: "data/sibyl.db"
+  wal_mode: true
+  busy_timeout_ms: 5000
+
+polling:
+  market_list_interval_seconds: 300       # 5 minutes
+  price_snapshot_interval_seconds: 30
+  trade_feed_interval_seconds: 60
+  orderbook_interval_seconds: 10
+  position_sync_interval_seconds: 60
+  open_interest_interval_seconds: 300
+
+platforms:
+  polymarket:
+    base_url: "https://clob.polymarket.com"
+    chain_id: 137
+    rate_limit_per_second: 10
+  kalshi:
+    base_url: "https://trading-api.kalshi.com/trade-api/v2"
+    rate_limit_per_second: 10
+
+notifications:
+  enabled: true
+  channel: "ntfy"
+  ntfy_server: "https://ntfy.sh"
+
+markets_watchlist_path: "config/markets_watchlist.yaml"

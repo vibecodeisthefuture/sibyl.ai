@@ -1,0 +1,46 @@
+[project]
+name = "sibyl"
+version = "0.1.0"
+description = "Fully autonomous prediction market investing system for Polymarket and Kalshi"
+readme = "README.md"
+requires-python = ">=3.12"
+license = { text = "MIT" }
+authors = [{ name = "Sibyl Team" }]
+
+dependencies = [
+    "aiohttp>=3.9",
+    "aiosqlite>=0.20",
+    "anthropic>=0.40",
+    "apscheduler>=3.10",
+    "httpx>=0.27",
+    "praw>=7.7",
+    "pydantic>=2.7",
+    "python-dotenv>=1.0",
+    "pyyaml>=6.0",
+    "websockets>=13.0",
+]
+
+[project.optional-dependencies]
+dev = [
+    "pytest>=8.0",
+    "pytest-asyncio>=0.24",
+    "ruff>=0.5",
+]
+
+[build-system]
+requires = ["hatchling"]
+build-backend = "hatchling.build"
+
+[tool.hatch.build.targets.wheel]
+packages = ["sibyl"]
+
+[tool.pytest.ini_options]
+asyncio_mode = "auto"
+testpaths = ["sibyl/tests"]
+
+[tool.ruff]
+line-length = 100
+target-version = "py312"
+
+[tool.ruff.lint]
+select = ["E", "F", "I", "W"]

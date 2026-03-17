@@ -1,0 +1,43 @@
+# ─── Market Intelligence Agent Configuration ───
+# Modes A (Whale), B (Volume), C (Order Book) + Analysis Queue Worker
+
+surveillance:
+  # Mode A — Whale Watching
+  whale_poll_interval_seconds: 30
+  whale_threshold_multiplier_default: 4.0
+  whale_threshold_by_category:
+    politics: 5.0
+    sports: 3.5
+    crypto: 6.0
+    economics: 4.0
+    other: 4.0
+  wallet_tracking_enabled: true         # Polymarket only
+  wallet_track_min_events: 3
+
+  # Mode B — Volume Anomaly
+  volume_poll_interval_minutes: 5
+  volume_rolling_window_days: 30
+  volume_zscore_threshold: 2.5
+  volume_spike_hourly_rate_threshold: 0.25
+  volume_resolution_proximity_boost_hours: 72
+
+  # Mode C — Order Book Depth
+  orderbook_poll_interval_ace_seconds: 1
+  orderbook_poll_interval_sge_seconds: 10
+  orderbook_depth_window_pct: 0.03      # 3% of mid_price
+  spread_expansion_threshold: 0.04      # normalized_spread > 4%
+  thin_market_depth_threshold: 500      # total_depth < $500
+  wall_size_multiplier: 8.0
+
+composite:
+  window_minutes: 15
+  high_conviction_modes_required: 2
+
+analysis:
+  llm_haiku_model: "claude-haiku-4-5-20251001"
+  llm_sonnet_model: "claude-sonnet-4-6"
+  sonnet_threshold_usd: 500
+  max_concurrent_llm_calls: 3
+  llm_timeout_seconds: 8
+  queue_max_depth: 50
+  scout_context_min_freshness: 0.30

@@ -1,0 +1,38 @@
+# ─── Alpha Capture Engine (ACE) Configuration ───
+# 30% of portfolio capital — aggressive, concentrated, speed-prioritized
+
+engine:
+  name: "ACE"
+  capital_allocation_pct: 0.30
+
+risk_policy:
+  active_policy: "AGGRESSIVE"
+  kelly_fraction: 0.35
+  min_ev_threshold: 0.06           # +6%
+  min_confidence: 0.68
+  max_single_position_pct: 0.08    # 8% of engine capital
+  max_platform_exposure_pct: 0.45  # 45% of engine capital
+  max_total_exposure_pct: 0.80     # 80% of engine capital
+  circuit_breaker_drawdown_pct: 0.18   # -18% engine drawdown
+  daily_loss_limit_pct: 0.08       # -8% of engine capital
+  per_market_stop_loss_pct: 0.50   # exit at -50% of position value
+
+signal_whitelist:
+  - MOMENTUM
+  - VOLUME_SURGE
+  - STALE_MARKET
+  - HIGH_CONVICTION_ARB
+
+execution:
+  style: "aggressive"              # prioritizes speed
+  rebalance_trigger: "realtime"
+  order_type: "market"             # market orders for speed on high-conviction
+  fallback_to_limit_if_spread_bps: 200  # use limit if spread > 200bps
+
+category_caps:
+  politics: 0.20
+  sports: 0.25
+  crypto: 0.25
+  science_tech: 0.15
+  economics: 0.10
+  other: 0.10
