@@ -1,0 +1,16 @@
+# ─── Sibyl.ai Docker Compose ───
+# Local development: docker compose up
+
+services:
+  sibyl:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    container_name: sibyl-ai
+    env_file: .env
+    volumes:
+      - ./data:/app/data      # SQLite persistence
+      - ./logs:/app/logs       # Log files
+      - ./config:/app/config   # Config override mount
+    restart: unless-stopped
+    command: ["python", "-m", "sibyl", "--agents", "monitor"]

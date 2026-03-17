@@ -20,6 +20,7 @@ polling:
   orderbook_interval_seconds: 10
   position_sync_interval_seconds: 60
   open_interest_interval_seconds: 300
+  sync_interval_seconds: 300              # Cross-platform sync every 5 min
 
 platforms:
   polymarket:
@@ -27,8 +28,12 @@ platforms:
     chain_id: 137
     rate_limit_per_second: 10
   kalshi:
-    base_url: "https://trading-api.kalshi.com/trade-api/v2"
+    base_url: "https://api.elections.kalshi.com/trade-api/v2"
     rate_limit_per_second: 10
+
+cross_platform:
+  similarity_threshold: 0.55              # Fuzzy match score for market pairing
+  price_divergence_alert_pct: 0.05        # 5% spread triggers divergence alert
 
 notifications:
   enabled: true
