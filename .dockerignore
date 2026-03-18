@@ -1,7 +1,23 @@
+# ─── Docker Build Ignore ───
+# Files and directories that should NOT be copied into the Docker image.
+# This keeps the image small and prevents leaking secrets into the build.
+#
+# HOW THIS WORKS:
+#   When you run `docker build`, Docker sends all files in the project
+#   directory to the build daemon (the "build context").  This file tells
+#   Docker which files to SKIP — similar to .gitignore for Git.
+
+# ── Version control ──
 .git
+
+# ── Python virtual environments ──
 .venv
 venv
+
+# ── Secrets (NEVER include in Docker images!) ──
 .env
+
+# ── Python bytecode/cache (regenerated at runtime) ──
 __pycache__
 *.pyc
 *.pyo
@@ -9,20 +25,30 @@ __pycache__
 dist
 build
 .eggs
+
+# ── Test artifacts ──
 .pytest_cache
 .coverage
 htmlcov
+
+# ── Logs and database (mounted as volumes instead) ──
 *.log
 logs/
 data/sibyl.db
 data/sibyl.db-wal
 data/sibyl.db-shm
+
+# ── IDE configuration ──
 .vscode
 .idea
 *.swp
 *.swo
+
+# ── OS files ──
 .DS_Store
 Thumbs.db
 .python-version
+
+# ── Markdown docs (except README) ──
 *.md
 !README.md

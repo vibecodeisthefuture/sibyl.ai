@@ -1,8 +1,33 @@
-"""Cross-Platform Sync Agent — unifies data and detects platform divergences.
+"""
+Cross-Platform Sync Agent — unifies data and detects arbitrage opportunities.
 
-Matches markets across Polymarket and Kalshi by title similarity and
-metadata (category, close date).  Detects price divergences for potential
-arbitrage signals.  Auto-tags markets with event_id for correlation tracking.
+PURPOSE:
+    This agent finds the SAME real-world event on both Polymarket and Kalshi,
+    then compares their prices.  If prices diverge significantly, it flags
+    an arbitrage opportunity.
+
+WHY THIS MATTERS:
+    If Polymarket says "Fed rate cut" is 70% likely, but Kalshi says 58%,
+    there's a 12% spread.  Since we can only trade on Kalshi (US restriction),
+    we can use this signal to inform our trading confidence.
+
+HOW MARKET MATCHING WORKS:
+    1. Load all active markets from both platforms (from SQLite).
+    2. For each Polymarket market, find the best-matching Kalshi market using:
+       - Title similarity (60% weight) — fuzzy string matching via difflib
+       - Category match (20% weight) — exact match on category tag
+       - Close date proximity (20% weight) — same expiration date
+    3. If the combined score exceeds the threshold (default: 0.55), it's a match.
+
+WHAT HAPPENS AFTER MATCHING:
+    - Price divergence check: compares latest prices and writes alerts to
+      the `system_state` table when the spread exceeds 5% (configurable).
+    - Event ID tagging: assigns a shared `event_id` to both markets so
+      downstream agents know they're tracking the same real-world event.
+
+CONFIGURATION (from system_config.yaml → cross_platform section):
+    similarity_threshold:       0.55   (minimum score to consider a match)
+    price_divergence_alert_pct: 0.05   (5% spread triggers an alert)
 """
 
 from __future__ import annotations

@@ -1,43 +1,60 @@
 # ─── Sibyl System Configuration ───
-# Global settings shared across all agents
+# Global settings shared across ALL agents.
+# Loaded by sibyl/core/config.py → load_system_config()
+#
+# HOW TO MODIFY:
+#   - Edit this file and restart Sibyl.
+#   - For Docker: mount override via docker-compose volume.
+#   - Credentials go in .env, NOT here (see .env.example).
 
 system:
   name: "sibyl"
   version: "0.1.0"
-  mode: "paper"  # paper | live
-  log_level: "INFO"
-  log_format: "json"
+  mode: "paper"        # "paper" = simulated (no real trades), "live" = real money
+  log_level: "INFO"    # DEBUG | INFO | WARNING | ERROR | CRITICAL
+  log_format: "json"   # "json" for machine-parseable, "console" for dev
 
 database:
-  path: "data/sibyl.db"
-  wal_mode: true
-  busy_timeout_ms: 5000
+  path: "data/sibyl.db"      # SQLite file path (relative to project root)
+  wal_mode: true              # Enable WAL mode for concurrent reads (recommended)
+  busy_timeout_ms: 5000       # Wait up to 5s for locks instead of erroring
 
+# ─── Polling Intervals ───
+# How frequently each data type is refreshed.
+# Agents use these values to decide when to fetch new data.
+# Lower values = more API calls = more data = more rate limit risk.
 polling:
-  market_list_interval_seconds: 300       # 5 minutes
-  price_snapshot_interval_seconds: 30
-  trade_feed_interval_seconds: 60
-  orderbook_interval_seconds: 10
-  position_sync_interval_seconds: 60
-  open_interest_interval_seconds: 300
-  sync_interval_seconds: 300              # Cross-platform sync every 5 min
+  market_list_interval_seconds: 300       # 5 min — discover new markets
+  price_snapshot_interval_seconds: 30     # 30s — main polling cadence
+  trade_feed_interval_seconds: 60         # 1 min — recent trades
+  orderbook_interval_seconds: 10          # 10s — L2 order book snapshots
+  position_sync_interval_seconds: 60      # 1 min — sync portfolio state
+  open_interest_interval_seconds: 300     # 5 min — open interest changes
+  sync_interval_seconds: 300              # 5 min — cross-platform sync
 
+# ─── Platform API Configuration ───
+# Platform-specific settings.  Credentials live in .env.
 platforms:
   polymarket:
-    base_url: "https://clob.polymarket.com"
-    chain_id: 137
-    rate_limit_per_second: 10
+    base_url: "https://clob.polymarket.com"   # CLOB API for pricing data
+    chain_id: 137                              # Polygon mainnet (Polymarket's chain)
+    rate_limit_per_second: 10                  # Max API requests per second
   kalshi:
-    base_url: "https://api.elections.kalshi.com/trade-api/v2"
-    rate_limit_per_second: 10
+    base_url: "https://api.elections.kalshi.com/trade-api/v2"  # Kalshi v2 API
+    rate_limit_per_second: 10                  # Max API requests per second
 
+# ─── Cross-Platform Sync ───
+# Settings for the CrossPlatformSyncAgent that matches markets across platforms.
 cross_platform:
-  similarity_threshold: 0.55              # Fuzzy match score for market pairing
-  price_divergence_alert_pct: 0.05        # 5% spread triggers divergence alert
+  similarity_threshold: 0.55              # Min score to consider two markets a match
+  price_divergence_alert_pct: 0.05        # 5% price spread triggers an alert
 
+# ─── Notifications ───
+# Alert delivery configuration.  Currently supports ntfy.sh (free push notifications).
 notifications:
   enabled: true
-  channel: "ntfy"
-  ntfy_server: "https://ntfy.sh"
+  channel: "ntfy"                         # Notification provider
+  ntfy_server: "https://ntfy.sh"          # ntfy.sh public server
 
+# Path to manually curated market watchlist
 markets_watchlist_path: "config/markets_watchlist.yaml"

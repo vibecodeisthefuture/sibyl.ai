@@ -1,9 +1,34 @@
-"""Kalshi Monitor Agent — ingests market data from Kalshi's Trading API v2.
+"""
+Kalshi Monitor Agent — ingests market data from Kalshi's Trading API v2.
 
-Kalshi is the PRIMARY execution platform for Sibyl.  This agent streams
-market metadata, prices, orderbook snapshots, and trades into the shared
-SQLite database.  It uses authenticated requests when credentials are
-available.
+PURPOSE:
+    Kalshi is the PRIMARY execution platform for Sibyl (the only platform
+    where we actually place bets).  This agent polls Kalshi's APIs for
+    market data and writes it to SQLite for analysis and trading decisions.
+
+DATA FLOW:
+    Kalshi API v2  →  KalshiClient  →  KalshiMonitorAgent  →  SQLite
+      (REST API)      (HTTP layer)    (polling + DB writes)  (database.py)
+
+KALSHI'S DATA HIERARCHY:
+    Event → contains multiple Markets
+    Example:
+        Event "Fed March Rate Decision" (event_ticker: "FED-RATE-MAR")
+          ├── Market "25bps cut?" (ticker: "FED-RATE-MAR-25BP")
+          └── Market "50bps cut?" (ticker: "FED-RATE-MAR-50BP")
+
+AUTHENTICATION MODES:
+    - If KALSHI_KEY_ID and KALSHI_PRIVATE_KEY_PATH are set in .env,
+      the agent runs in AUTHENTICATED mode (can read portfolio, positions).
+    - Otherwise, it runs in PUBLIC-ONLY mode (market data only).
+
+WHAT THIS AGENT WRITES TO THE DATABASE:
+    - markets table:    Market metadata with Kalshi-specific event_id grouping
+    - prices table:     YES/NO prices + volume + open interest (every 30s)
+    - orderbook table:  Normalized order book snapshots (every 30s)
+    - trades_log table: Recent trades with taker side (every 60s)
+
+POLLING CADENCES: Same as PolymarketMonitorAgent (see that file for details).
 """
 
 from __future__ import annotations

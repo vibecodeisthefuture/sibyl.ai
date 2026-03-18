@@ -1,16 +1,31 @@
 # ─── Sibyl.ai Docker Compose ───
-# Local development: docker compose up
+#
+# Local development environment using Docker Compose.
+#
+# HOW TO USE:
+#     docker compose up              # Start in foreground (see logs)
+#     docker compose up -d           # Start in background (detached)
+#     docker compose down            # Stop and remove containers
+#     docker compose logs -f sibyl   # Stream live logs
+#
+# VOLUMES:
+#     ./data   → /app/data    SQLite database persistence
+#     ./logs   → /app/logs    Log file persistence
+#     ./config → /app/config  Config files (allows live editing)
+#
+# ENVIRONMENT:
+#     Reads API credentials from .env file in the project root.
 
 services:
   sibyl:
     build:
-      context: .
-      dockerfile: Dockerfile
-    container_name: sibyl-ai
-    env_file: .env
+      context: .                     # Build from project root
+      dockerfile: Dockerfile         # Use the Dockerfile above
+    container_name: sibyl-ai         # Container name for `docker logs sibyl-ai`
+    env_file: .env                   # Load API credentials from .env
     volumes:
-      - ./data:/app/data      # SQLite persistence
-      - ./logs:/app/logs       # Log files
-      - ./config:/app/config   # Config override mount
-    restart: unless-stopped
+      - ./data:/app/data             # SQLite DB persists between restarts
+      - ./logs:/app/logs             # Log files persist between restarts
+      - ./config:/app/config         # Config files can be edited without rebuild
+    restart: unless-stopped          # Auto-restart on crash (not manual stop)
     command: ["python", "-m", "sibyl", "--agents", "monitor"]

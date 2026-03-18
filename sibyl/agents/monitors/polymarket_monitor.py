@@ -1,8 +1,32 @@
-"""Polymarket Monitor Agent — ingests market data from Polymarket's public APIs.
+"""
+Polymarket Monitor Agent — ingests market data from Polymarket's public APIs.
 
-Polymarket is READ-ONLY for Sibyl (US geo-restriction).  This agent streams
-market metadata, prices, orderbook snapshots, and trades into the shared
-SQLite database for use by the Intelligence and Sync agents.
+PURPOSE:
+    Polymarket is READ-ONLY for Sibyl due to US geo-restrictions.  This agent
+    continuously polls Polymarket's APIs and writes market data into SQLite
+    so that other agents (Intelligence, Sync) can analyze it.
+
+DATA FLOW:
+    Polymarket APIs  →  PolymarketClient  →  PolymarketMonitorAgent  →  SQLite
+         (Gamma + CLOB)     (HTTP layer)     (polling + DB writes)    (database.py)
+
+WHAT THIS AGENT WRITES TO THE DATABASE:
+    - markets table:    Market metadata (title, category, close date, status)
+    - prices table:     YES/NO price snapshots (every 30s)
+    - orderbook table:  L2 order book snapshots as JSON (every 30s)
+    - trades_log table: Recent trades (every 60s)
+
+POLLING CADENCES (at default 30s poll_interval):
+    - Market list refresh: every 10th cycle ≈ 5 minutes
+    - Price snapshots:     every cycle ≈ 30 seconds
+    - Orderbook snapshots: every cycle ≈ 30 seconds
+    - Trade feed:          every 2nd cycle ≈ 60 seconds
+
+TOKEN ID RESOLUTION:
+    Polymarket uses "token IDs" for pricing — each market has YES and NO tokens.
+    This agent extracts the YES token ID from market metadata to query prices.
+    The token ID is found in the `tokens` or `clob_token_ids` field of the
+    market response from the Gamma API.
 """
 
 from __future__ import annotations
