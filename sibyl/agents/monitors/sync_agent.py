@@ -60,8 +60,9 @@ class CrossPlatformSyncAgent(BaseAgent):
 
     @property
     def poll_interval(self) -> float:
+        """Run every 30 seconds for near-real-time divergence detection."""
         return float(
-            self.config.get("polling", {}).get("sync_interval_seconds", 300)
+            self.config.get("polling", {}).get("sync_interval_seconds", 30)
         )
 
     async def start(self) -> None:

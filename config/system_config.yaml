@@ -2,6 +2,9 @@
 # Global settings shared across ALL agents.
 # Loaded by sibyl/core/config.py → load_system_config()
 #
+# PHILOSOPHY: Poll as fast as both platforms allow at ZERO COST.
+# Sibyl is relentless, agile, and persistent in chasing growth.
+#
 # HOW TO MODIFY:
 #   - Edit this file and restart Sibyl.
 #   - For Docker: mount override via docker-compose volume.
@@ -9,7 +12,7 @@
 
 system:
   name: "sibyl"
-  version: "0.1.0"
+  version: "0.2.0"
   mode: "paper"        # "paper" = simulated (no real trades), "live" = real money
   log_level: "INFO"    # DEBUG | INFO | WARNING | ERROR | CRITICAL
   log_format: "json"   # "json" for machine-parseable, "console" for dev
@@ -19,29 +22,42 @@ database:
   wal_mode: true              # Enable WAL mode for concurrent reads (recommended)
   busy_timeout_ms: 5000       # Wait up to 5s for locks instead of erroring
 
-# ─── Polling Intervals ───
-# How frequently each data type is refreshed.
-# Agents use these values to decide when to fetch new data.
-# Lower values = more API calls = more data = more rate limit risk.
+# ─── Polling Intervals (AGGRESSIVE) ───
+# Tuned to the MAXIMUM rate both platforms permit at zero cost.
+#
+# RATE LIMIT BUDGET:
+#   Polymarket: 900 req/10s general (90/s), price/book endpoints 150/s
+#               → We set rate limiter to 80 req/s (90% headroom)
+#   Kalshi:     Basic tier ~10 req/s
+#               → We set rate limiter to 8 req/s (80% headroom)
+#
+# FORMULA: interval = num_tracked_markets × calls_per_market / rate_limit
+#   With 50 tracked markets and 3 calls/market (price, book, trades):
+#     Polymarket: 50 × 3 / 80 = ~1.9s per full scan
+#     Kalshi:     50 × 3 / 8  = ~18.8s per full scan
+#
+# We set the poll_interval to the SLOWER platform (Kalshi) to stay safe,
+# but use burst-capable intervals on Polymarket-specific scans.
 polling:
-  market_list_interval_seconds: 300       # 5 min — discover new markets
-  price_snapshot_interval_seconds: 30     # 30s — main polling cadence
-  trade_feed_interval_seconds: 60         # 1 min — recent trades
-  orderbook_interval_seconds: 10          # 10s — L2 order book snapshots
-  position_sync_interval_seconds: 60      # 1 min — sync portfolio state
-  open_interest_interval_seconds: 300     # 5 min — open interest changes
-  sync_interval_seconds: 300              # 5 min — cross-platform sync
+  market_list_interval_seconds: 120     # 2 min — discover new markets FAST
+  price_snapshot_interval_seconds: 5    # 5s — near-real-time price tracking
+  trade_feed_interval_seconds: 10       # 10s — catch whale trades quickly
+  orderbook_interval_seconds: 5         # 5s — structural changes are time-sensitive
+  position_sync_interval_seconds: 15    # 15s — keep position state fresh
+  open_interest_interval_seconds: 60    # 1 min — open interest shifts
+  sync_interval_seconds: 30             # 30s — cross-platform divergence detection
 
 # ─── Platform API Configuration ───
-# Platform-specific settings.  Credentials live in .env.
+# Rate limiters set to ~80-90% of the free-tier ceiling for safety.
 platforms:
   polymarket:
     base_url: "https://clob.polymarket.com"   # CLOB API for pricing data
+    gamma_url: "https://gamma-api.polymarket.com"  # Gamma API for market metadata
     chain_id: 137                              # Polygon mainnet (Polymarket's chain)
-    rate_limit_per_second: 10                  # Max API requests per second
+    rate_limit_per_second: 80                  # Free tier: 900/10s = 90/s → 80/s safe
   kalshi:
     base_url: "https://api.elections.kalshi.com/trade-api/v2"  # Kalshi v2 API
-    rate_limit_per_second: 10                  # Max API requests per second
+    rate_limit_per_second: 8                   # Basic tier: ~10/s → 8/s safe
 
 # ─── Cross-Platform Sync ───
 # Settings for the CrossPlatformSyncAgent that matches markets across platforms.

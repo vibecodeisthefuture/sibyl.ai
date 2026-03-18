@@ -90,8 +90,8 @@ class SignalRouter(BaseAgent):
 
     @property
     def poll_interval(self) -> float:
-        """Run every 10 seconds — fast routing to minimize signal latency."""
-        return 10.0
+        """Run every 3 seconds — fastest agent in the pipeline for minimal routing latency."""
+        return 3.0
 
     async def start(self) -> None:
         """Load SGE and ACE engine configurations for routing decisions."""

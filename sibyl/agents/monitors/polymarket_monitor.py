@@ -46,11 +46,14 @@ logger = logging.getLogger("sibyl.agents.polymarket_monitor")
 class PolymarketMonitorAgent(BaseAgent):
     """Streams Polymarket market data into SQLite.
 
-    Polling cadences:
-      - Market list refresh: every 5 min (cycle_count % 10 == 0 at 30s polling)
-      - Price snapshots: every cycle (30s)
-      - Orderbook snapshots: every cycle (30s)
-      - Recent trades: every 2nd cycle (60s)
+    AGGRESSIVE POLLING (tuned to Polymarket's free-tier limits):
+      Polymarket allows 900 req/10s = 90 req/s.  We use 80 req/s (90% safety).
+
+      At a 5-second poll interval:
+        - Market list refresh: every 24th cycle ≈ 2 minutes
+        - Price snapshots: EVERY cycle (5s)
+        - Orderbook snapshots: EVERY cycle (5s)
+        - Recent trades: every 2nd cycle (10s)
     """
 
     def __init__(self, db: DatabaseManager, config: dict[str, Any]) -> None:
@@ -62,7 +65,8 @@ class PolymarketMonitorAgent(BaseAgent):
 
     @property
     def poll_interval(self) -> float:
-        return float(self._polling.get("price_snapshot_interval_seconds", 30))
+        """Poll every 5 seconds — Polymarket's 90 req/s limit gives massive headroom."""
+        return float(self._polling.get("price_snapshot_interval_seconds", 5))
 
     async def start(self) -> None:
         rate_limit = float(self._pm_config.get("rate_limit_per_second", 10))
@@ -81,20 +85,20 @@ class PolymarketMonitorAgent(BaseAgent):
         if not self._client:
             return
 
-        # ── Market list refresh (every 10 cycles ≈ 5 min) ────────────
-        if self._cycle_count % 10 == 0:
+        # ── Market list refresh (every 24 cycles ≈ 2 min at 5s polling) ─
+        if self._cycle_count % 24 == 0:
             await self._refresh_markets()
 
         if not self._tracked_markets:
             return
 
-        # ── Price snapshots (every cycle) ─────────────────────────────
+        # ── Price snapshots (EVERY cycle — 5s) ────────────────────────
         await self._snapshot_prices()
 
-        # ── Orderbook snapshots (every cycle) ─────────────────────────
+        # ── Orderbook snapshots (EVERY cycle — 5s) ────────────────────
         await self._snapshot_orderbooks()
 
-        # ── Trade feed (every 2nd cycle ≈ 60s) ───────────────────────
+        # ── Trade feed (every 2nd cycle ≈ 10s) ────────────────────────
         if self._cycle_count % 2 == 0:
             await self._fetch_trades()
 

@@ -94,9 +94,9 @@ class MarketIntelligenceAgent(BaseAgent):
 
     @property
     def poll_interval(self) -> float:
-        """Run every 30 seconds (same as price snapshots)."""
+        """Run every 5 seconds — must match the monitor polling rate to detect events in real time."""
         return float(self.config.get("polling", {}).get(
-            "price_snapshot_interval_seconds", 30
+            "price_snapshot_interval_seconds", 5
         ))
 
     async def start(self) -> None:

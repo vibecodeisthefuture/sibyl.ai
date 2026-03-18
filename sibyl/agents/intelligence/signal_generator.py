@@ -97,8 +97,8 @@ class SignalGenerator(BaseAgent):
 
     @property
     def poll_interval(self) -> float:
-        """Run every 15 seconds — faster than intel agent to catch signals quickly."""
-        return 15.0
+        """Run every 5 seconds — process detections as fast as they appear."""
+        return 5.0
 
     async def start(self) -> None:
         """Load composite scoring configuration."""
