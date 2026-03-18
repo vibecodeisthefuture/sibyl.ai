@@ -2,10 +2,11 @@
 Sibyl.ai — Autonomous Prediction Market Investing System.
 
 This is the APPLICATION ENTRY POINT.  Run with:
-    python -m sibyl                          # Start all agents (default)
-    python -m sibyl --agents monitor         # Start monitor agents only
-    python -m sibyl --mode paper             # Paper trading mode (default)
-    python -m sibyl --mode live              # Live trading (real money!)
+    python -m sibyl                              # Start all agents (default)
+    python -m sibyl --agents monitor             # Start monitor agents only
+    python -m sibyl --agents intelligence        # Start intelligence agents only
+    python -m sibyl --mode paper                 # Paper trading mode (default)
+    python -m sibyl --mode live                  # Live trading (real money!)
 
 WHAT HAPPENS WHEN YOU START SIBYL:
     1. Loads all YAML configuration from config/ directory.
@@ -15,10 +16,15 @@ WHAT HAPPENS WHEN YOU START SIBYL:
     5. Runs indefinitely until you press Ctrl+C or send SIGTERM.
     6. On shutdown, gracefully stops all agents and closes the database.
 
-AGENTS STARTED (with --agents monitor or --agents all):
-    - PolymarketMonitorAgent: Ingests Polymarket data (read-only)
-    - KalshiMonitorAgent:     Ingests Kalshi data (primary platform)
-    - CrossPlatformSyncAgent: Matches markets + detects price divergences
+AGENTS STARTED:
+    --agents monitor (or all):
+        - PolymarketMonitorAgent: Ingests Polymarket data (read-only)
+        - KalshiMonitorAgent:     Ingests Kalshi data (primary platform)
+        - CrossPlatformSyncAgent: Matches markets + detects price divergences
+    --agents intelligence (or all):
+        - MarketIntelligenceAgent: 3 surveillance modes (Whale, Volume, OrderBook)
+        - SignalGenerator:         Composite scoring, EV estimation
+        - SignalRouter:            Routes signals to SGE/ACE engines
 
 SIGNAL HANDLING:
     - SIGINT (Ctrl+C): Graceful shutdown
@@ -81,8 +87,20 @@ async def main(args: argparse.Namespace) -> None:
         agents.append(KalshiMonitorAgent(db=db, config=config.system))
         agents.append(CrossPlatformSyncAgent(db=db, config=config.system))
 
+    # Intelligence layer agents (Sprint 2)
+    intel_agent = None  # Shared reference so SignalGenerator can read detections
+    if agent_scope in ("intelligence", "all"):
+        from sibyl.agents.intelligence.market_intelligence import MarketIntelligenceAgent
+        from sibyl.agents.intelligence.signal_generator import SignalGenerator
+        from sibyl.agents.intelligence.signal_router import SignalRouter
+
+        intel_agent = MarketIntelligenceAgent(db=db, config=config.system)
+        agents.append(intel_agent)
+        agents.append(SignalGenerator(db=db, config=config.system, intel_agent=intel_agent))
+        agents.append(SignalRouter(db=db, config=config.system))
+
     if not agents:
-        logger.error("No agents to run. Use --agents monitor|all")
+        logger.error("No agents to run. Use --agents monitor|intelligence|all")
         await db.close()
         return
 
@@ -145,8 +163,8 @@ def cli() -> None:
         help="Trading mode: 'paper' (simulated) or 'live' (real money). Default: paper."
     )
     parser.add_argument(
-        "--agents", choices=["monitor", "all"], default="all",
-        help="Which agents to run: 'monitor' (data only) or 'all'. Default: all."
+        "--agents", choices=["monitor", "intelligence", "all"], default="all",
+        help="Which agents to run: 'monitor', 'intelligence', or 'all'. Default: all."
     )
     args = parser.parse_args()
 
