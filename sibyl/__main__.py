@@ -25,6 +25,10 @@ AGENTS STARTED:
         - MarketIntelligenceAgent: 3 surveillance modes (Whale, Volume, OrderBook)
         - SignalGenerator:         Composite scoring, EV estimation
         - SignalRouter:            Routes signals to SGE/ACE engines
+    --agents execution (or all):
+        - OrderExecutor:             Signal → position via Kelly-sized orders
+        - PositionLifecycleManager:  5 sub-routines managing open positions
+        - EngineStateManager:        Capital allocation + circuit breaker tracking
 
 SIGNAL HANDLING:
     - SIGINT (Ctrl+C): Graceful shutdown
@@ -99,8 +103,19 @@ async def main(args: argparse.Namespace) -> None:
         agents.append(SignalGenerator(db=db, config=config.system, intel_agent=intel_agent))
         agents.append(SignalRouter(db=db, config=config.system))
 
+    # Execution layer agents (Sprint 3)
+    if agent_scope in ("execution", "all"):
+        from sibyl.agents.execution.order_executor import OrderExecutor
+        from sibyl.agents.execution.position_lifecycle import PositionLifecycleManager
+        from sibyl.agents.execution.engine_state_manager import EngineStateManager
+
+        trade_mode = args.mode if hasattr(args, "mode") else "paper"
+        agents.append(OrderExecutor(db=db, config=config.system, mode=trade_mode))
+        agents.append(PositionLifecycleManager(db=db, config=config.system))
+        agents.append(EngineStateManager(db=db, config=config.system))
+
     if not agents:
-        logger.error("No agents to run. Use --agents monitor|intelligence|all")
+        logger.error("No agents to run. Use --agents monitor|intelligence|execution|all")
         await db.close()
         return
 
@@ -163,8 +178,8 @@ def cli() -> None:
         help="Trading mode: 'paper' (simulated) or 'live' (real money). Default: paper."
     )
     parser.add_argument(
-        "--agents", choices=["monitor", "intelligence", "all"], default="all",
-        help="Which agents to run: 'monitor', 'intelligence', or 'all'. Default: all."
+        "--agents", choices=["monitor", "intelligence", "execution", "all"], default="all",
+        help="Which agents to run: 'monitor', 'intelligence', 'execution', or 'all'. Default: all."
     )
     args = parser.parse_args()
 

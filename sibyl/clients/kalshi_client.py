@@ -534,3 +534,87 @@ class KalshiClient:
         if isinstance(data, dict):
             return data
         return {"market_positions": [], "cursor": None}
+
+    # ── Authenticated: Order Placement (requires API key) ─────────────
+    # These methods actually PLACE TRADES on Kalshi.  Only called in live mode.
+
+    async def place_order(
+        self,
+        ticker: str,
+        side: str,
+        size: int,
+        price_cents: int,
+        order_type: str = "limit",
+    ) -> dict | None:
+        """Place an order on Kalshi (requires authentication).
+
+        IMPORTANT: This spends real money in live mode!
+        In paper mode, the Order Executor simulates fills without calling this.
+
+        Args:
+            ticker:      Market ticker (e.g., "FED-RATE-MAR-25BP").
+            side:        "yes" or "no" — which outcome to buy.
+            size:        Number of contracts to buy (integer, min 1).
+            price_cents: Limit price in cents (1-99). E.g., 65 = $0.65.
+            order_type:  "limit" (default) or "market".
+
+        Returns:
+            Order response dict with "order_id", "status", etc.
+            Returns None if not authenticated.
+
+        Example:
+            # Buy 10 YES contracts at $0.55
+            result = await client.place_order(
+                ticker="FED-RATE-MAR-25BP",
+                side="yes",
+                size=10,
+                price_cents=55,
+            )
+            print(result["order"]["order_id"])
+        """
+        if not self.is_authenticated:
+            logger.warning("Cannot place order — not authenticated")
+            return None
+
+        body = {
+            "ticker": ticker,
+            "action": "buy",
+            "side": side.lower(),
+            "count": size,
+            "type": order_type,
+        }
+        # Only include price for limit orders (market orders fill at best available)
+        if order_type == "limit":
+            body["yes_price"] = price_cents if side.lower() == "yes" else None
+            body["no_price"] = price_cents if side.lower() == "no" else None
+
+        data = await self._post("/portfolio/orders", json_body=body)
+        if isinstance(data, dict):
+            logger.info(
+                "Order placed: %s %s %d@%d¢ on %s",
+                side, order_type, size, price_cents, ticker,
+            )
+            return data
+        return None
+
+    async def cancel_order(self, order_id: str) -> dict | None:
+        """Cancel a resting order on Kalshi (requires authentication).
+
+        Args:
+            order_id: The Kalshi order ID to cancel.
+
+        Returns:
+            Cancellation response dict, or None if not authenticated.
+        """
+        if not self.is_authenticated:
+            logger.warning("Cannot cancel order — not authenticated")
+            return None
+
+        data = await self._request(
+            "DELETE", f"/portfolio/orders/{order_id}", auth=True,
+        )
+        if isinstance(data, dict):
+            logger.info("Order cancelled: %s", order_id)
+            return data
+        return None
+
