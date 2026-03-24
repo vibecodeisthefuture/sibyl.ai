@@ -1,0 +1,894 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Hero Page Recreation — Visual Element Breakdown & Resource Guide</title>
+<style>
+  @import url('https://fonts.googleapis.com/css2?family=DM+Sans:ital,opsz,wght@0,9..40,400;0,9..40,600;0,9..40,700;1,9..40,400;1,9..40,700&family=JetBrains+Mono:wght@400;600&display=swap');
+
+  :root {
+    --bg: #0F0E1A;
+    --card: #1A1930;
+    --surface: #252442;
+    --border: #3D3C6B;
+    --blue: #2563EB;
+    --blue-light: #3B82F6;
+    --green: #10B981;
+    --amber: #F59E0B;
+    --text: #F8F9FB;
+    --text-sec: #9F9FAB;
+    --text-muted: #6E6D7B;
+    --holo-gold: #C8A587;
+    --holo-rose: #C29194;
+    --holo-purple: #56549D;
+    --holo-blue: #3B5E98;
+    --lavender: #DDDFEC;
+  }
+
+  * { margin: 0; padding: 0; box-sizing: border-box; }
+
+  body {
+    font-family: 'DM Sans', system-ui, sans-serif;
+    background: var(--bg);
+    color: var(--text);
+    line-height: 1.7;
+    -webkit-font-smoothing: antialiased;
+  }
+
+  .container { max-width: 1100px; margin: 0 auto; padding: 0 32px; }
+
+  /* Header */
+  header {
+    padding: 80px 0 60px;
+    text-align: center;
+    border-bottom: 1px solid var(--border);
+  }
+  header .label {
+    display: inline-block;
+    font-family: 'JetBrains Mono', monospace;
+    font-size: 11px;
+    text-transform: uppercase;
+    letter-spacing: 3px;
+    color: var(--blue-light);
+    background: rgba(37,99,235,0.12);
+    padding: 6px 16px;
+    border-radius: 20px;
+    margin-bottom: 24px;
+  }
+  header h1 {
+    font-size: 42px;
+    font-weight: 700;
+    line-height: 1.2;
+    margin-bottom: 16px;
+    background: linear-gradient(90deg, var(--holo-gold), var(--holo-rose), var(--holo-purple), var(--holo-blue));
+    -webkit-background-clip: text;
+    -webkit-text-fill-color: transparent;
+    background-clip: text;
+  }
+  header p {
+    color: var(--text-sec);
+    font-size: 16px;
+    max-width: 600px;
+    margin: 0 auto;
+  }
+
+  /* Table of Contents */
+  .toc {
+    padding: 40px 0;
+    border-bottom: 1px solid var(--border);
+  }
+  .toc h2 {
+    font-size: 13px;
+    text-transform: uppercase;
+    letter-spacing: 2px;
+    color: var(--text-muted);
+    margin-bottom: 20px;
+  }
+  .toc-grid {
+    display: grid;
+    grid-template-columns: repeat(auto-fill, minmax(220px, 1fr));
+    gap: 8px;
+  }
+  .toc-grid a {
+    display: flex;
+    align-items: center;
+    gap: 10px;
+    color: var(--text-sec);
+    text-decoration: none;
+    font-size: 14px;
+    padding: 8px 12px;
+    border-radius: 8px;
+    transition: all 0.2s;
+  }
+  .toc-grid a:hover {
+    background: var(--card);
+    color: var(--text);
+  }
+  .toc-grid a .num {
+    font-family: 'JetBrains Mono', monospace;
+    font-size: 12px;
+    color: var(--blue-light);
+    min-width: 24px;
+  }
+
+  /* Section */
+  section { padding: 56px 0; border-bottom: 1px solid var(--border); }
+  section:last-of-type { border-bottom: none; }
+
+  .section-label {
+    font-family: 'JetBrains Mono', monospace;
+    font-size: 11px;
+    text-transform: uppercase;
+    letter-spacing: 2px;
+    color: var(--blue-light);
+    margin-bottom: 8px;
+  }
+  section h2 {
+    font-size: 28px;
+    font-weight: 700;
+    margin-bottom: 8px;
+  }
+  section .section-desc {
+    color: var(--text-sec);
+    font-size: 15px;
+    margin-bottom: 32px;
+    max-width: 700px;
+  }
+  section h3 {
+    font-size: 18px;
+    font-weight: 600;
+    margin: 32px 0 12px;
+    color: var(--text);
+  }
+  section p {
+    color: var(--text-sec);
+    font-size: 14px;
+    margin-bottom: 12px;
+  }
+
+  /* Element cards */
+  .element-card {
+    background: var(--card);
+    border: 1px solid var(--border);
+    border-radius: 16px;
+    padding: 28px;
+    margin-bottom: 24px;
+  }
+  .element-card h3 {
+    margin-top: 0;
+    font-size: 20px;
+    display: flex;
+    align-items: center;
+    gap: 12px;
+  }
+  .element-card h3 .badge {
+    font-family: 'JetBrains Mono', monospace;
+    font-size: 10px;
+    text-transform: uppercase;
+    letter-spacing: 1px;
+    padding: 3px 10px;
+    border-radius: 12px;
+    font-weight: 600;
+  }
+  .badge-critical { background: rgba(239,68,68,0.15); color: #EF4444; }
+  .badge-key { background: rgba(37,99,235,0.15); color: var(--blue-light); }
+  .badge-accent { background: rgba(139,92,246,0.15); color: #8B5CF6; }
+  .badge-detail { background: rgba(16,185,129,0.15); color: var(--green); }
+
+  .specs {
+    display: grid;
+    grid-template-columns: 140px 1fr;
+    gap: 6px 16px;
+    margin: 16px 0;
+    font-size: 14px;
+  }
+  .specs dt {
+    color: var(--text-muted);
+    font-size: 12px;
+    text-transform: uppercase;
+    letter-spacing: 0.5px;
+    padding-top: 2px;
+  }
+  .specs dd { color: var(--text-sec); }
+
+  /* Resource links */
+  .resources {
+    margin-top: 20px;
+    padding-top: 20px;
+    border-top: 1px solid var(--border);
+  }
+  .resources h4 {
+    font-size: 11px;
+    text-transform: uppercase;
+    letter-spacing: 1.5px;
+    color: var(--text-muted);
+    margin-bottom: 12px;
+  }
+  .resource-link {
+    display: flex;
+    align-items: flex-start;
+    gap: 12px;
+    padding: 10px 14px;
+    background: var(--surface);
+    border-radius: 10px;
+    margin-bottom: 8px;
+    text-decoration: none;
+    transition: all 0.2s;
+    border: 1px solid transparent;
+  }
+  .resource-link:hover {
+    border-color: var(--blue);
+    background: rgba(37,99,235,0.08);
+  }
+  .resource-link .r-icon {
+    width: 36px;
+    height: 36px;
+    border-radius: 8px;
+    background: var(--card);
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    font-size: 16px;
+    flex-shrink: 0;
+    margin-top: 2px;
+  }
+  .resource-link .r-info { flex: 1; }
+  .resource-link .r-title {
+    color: var(--text);
+    font-size: 14px;
+    font-weight: 600;
+    display: block;
+    margin-bottom: 2px;
+  }
+  .resource-link .r-desc {
+    color: var(--text-muted);
+    font-size: 12px;
+    display: block;
+  }
+  .resource-link .r-url {
+    font-family: 'JetBrains Mono', monospace;
+    font-size: 11px;
+    color: var(--blue-light);
+    display: block;
+    margin-top: 4px;
+    word-break: break-all;
+  }
+
+  /* Color swatches */
+  .color-row {
+    display: flex;
+    align-items: center;
+    gap: 14px;
+    margin-bottom: 10px;
+  }
+  .swatch {
+    width: 40px;
+    height: 40px;
+    border-radius: 10px;
+    border: 1px solid rgba(255,255,255,0.08);
+    flex-shrink: 0;
+  }
+  .color-info .hex {
+    font-family: 'JetBrains Mono', monospace;
+    font-size: 13px;
+    color: var(--text);
+  }
+  .color-info .usage {
+    font-size: 12px;
+    color: var(--text-muted);
+  }
+
+  /* Tip box */
+  .tip {
+    background: rgba(37,99,235,0.08);
+    border-left: 3px solid var(--blue);
+    border-radius: 0 10px 10px 0;
+    padding: 16px 20px;
+    margin: 20px 0;
+  }
+  .tip strong {
+    color: var(--blue-light);
+    font-size: 12px;
+    text-transform: uppercase;
+    letter-spacing: 1px;
+    display: block;
+    margin-bottom: 6px;
+  }
+  .tip p { color: var(--text-sec); font-size: 13px; margin: 0; }
+
+  /* Code blocks */
+  code {
+    font-family: 'JetBrains Mono', monospace;
+    font-size: 12px;
+    background: var(--surface);
+    padding: 2px 7px;
+    border-radius: 4px;
+    color: var(--holo-rose);
+  }
+  pre {
+    background: var(--surface);
+    border: 1px solid var(--border);
+    border-radius: 10px;
+    padding: 16px 20px;
+    overflow-x: auto;
+    margin: 12px 0;
+  }
+  pre code {
+    background: none;
+    padding: 0;
+    font-size: 12px;
+    line-height: 1.8;
+    color: var(--text-sec);
+  }
+
+  /* Gradient preview */
+  .gradient-preview {
+    height: 80px;
+    border-radius: 12px;
+    margin: 16px 0;
+    background: linear-gradient(135deg, #C8A587, #C29194, #56549D, #3B5E98);
+    background-size: 300% 300%;
+    animation: gradientShift 8s ease infinite;
+  }
+  @keyframes gradientShift {
+    0%, 100% { background-position: 0% 50%; }
+    50% { background-position: 100% 50%; }
+  }
+
+  .two-col {
+    display: grid;
+    grid-template-columns: 1fr 1fr;
+    gap: 24px;
+  }
+  @media (max-width: 768px) {
+    .two-col { grid-template-columns: 1fr; }
+    header h1 { font-size: 28px; }
+  }
+
+  footer {
+    padding: 48px 0;
+    text-align: center;
+    color: var(--text-muted);
+    font-size: 13px;
+  }
+</style>
+</head>
+<body>
+
+<div class="container">
+<header>
+  <div class="label">Resource Guide</div>
+  <h1>Hero Page Recreation — Visual Element Breakdown</h1>
+  <p>Every visual element identified from the "Shopper" hero page, with exact specs, color values, and links to download matching resources.</p>
+</header>
+
+<nav class="toc">
+  <h2>Elements Identified</h2>
+  <div class="toc-grid">
+    <a href="#e1"><span class="num">01</span> Holographic 3D Cross</a>
+    <a href="#e2"><span class="num">02</span> Gradient Headline Typography</a>
+    <a href="#e3"><span class="num">03</span> Wireframe Spiral/Helix</a>
+    <a href="#e4"><span class="num">04</span> Doodle Smiley Face</a>
+    <a href="#e5"><span class="num">05</span> Rotating Circular Text Badge</a>
+    <a href="#e6"><span class="num">06</span> Organic Brush Strokes</a>
+    <a href="#e7"><span class="num">07</span> Holographic Sphere (partial)</a>
+    <a href="#e8"><span class="num">08</span> Color Palette & Background</a>
+    <a href="#e9"><span class="num">09</span> CTA Buttons</a>
+    <a href="#e10"><span class="num">10</span> Navigation & Layout</a>
+    <a href="#e11"><span class="num">11</span> Device Frame</a>
+    <a href="#e12"><span class="num">12</span> Logo</a>
+  </div>
+</nav>
+
+<!-- ═══════════════════════════════════════ -->
+<!-- ELEMENT 1: HOLOGRAPHIC 3D CROSS        -->
+<!-- ═══════════════════════════════════════ -->
+<section id="e1">
+  <div class="element-card">
+    <h3>Holographic 3D Cross / Plus Shape <span class="badge badge-critical">Hero Visual</span></h3>
+    <p>The dominant right-side visual. A large, rounded-corner cross/plus shape with a conical/radial metallic gradient. Colors shift from warm gold and rose to cool purple and blue emanating from a central radial point. The gradient has a visible grain/noise texture.</p>
+
+    <dl class="specs">
+      <dt>Shape</dt><dd>Rounded plus/cross, ~600px wide, thick arms with rounded ends</dd>
+      <dt>Gradient Type</dt><dd>Conical / angular radial gradient from center point</dd>
+      <dt>Colors</dt><dd>#C8A587 → #C29194 → #56549D → #3B5E98 (warm to cool sweep)</dd>
+      <dt>Texture</dt><dd>Subtle noise/grain overlay giving a matte-metallic feel</dd>
+      <dt>Animation</dt><dd>Slow gradient position shift, colors appear to rotate around the center (~15s loop)</dd>
+      <dt>Position</dt><dd>Right-aligned, partially overflowing off the right and bottom edges</dd>
+    </dl>
+
+    <div class="gradient-preview"></div>
+
+    <div class="tip">
+      <strong>Recreation Approach</strong>
+      <p>Best approach: Create in Blender as a 3D shape with an iridescent/holographic shader and render as PNG sequence or video. Alternative: Use an SVG cross shape with a CSS conic-gradient background and a noise texture overlay using an SVG filter.</p>
+    </div>
+
+    <div class="resources">
+      <h4>Download Resources</h4>
+      <a href="https://www.freepik.com/free-photos-vectors/holographic-3d-shape" class="resource-link" target="_blank">
+        <div class="r-icon">🎨</div>
+        <div class="r-info">
+          <span class="r-title">Freepik — Holographic 3D Shapes</span>
+          <span class="r-desc">Free vector/PSD collection of iridescent 3D shapes (cross, sphere, torus). Look for "plus" or "cross" shapes.</span>
+          <span class="r-url">freepik.com/free-photos-vectors/holographic-3d-shape</span>
+        </div>
+      </a>
+      <a href="https://www.vecteezy.com/free-vector/holographic-shapes" class="resource-link" target="_blank">
+        <div class="r-icon">✨</div>
+        <div class="r-info">
+          <span class="r-title">Vecteezy — Holographic Shapes (9,500+ free)</span>
+          <span class="r-desc">Large collection of royalty-free holographic shapes, including cross/plus forms with metallic gradients.</span>
+          <span class="r-url">vecteezy.com/free-vector/holographic-shapes</span>
+        </div>
+      </a>
+      <a href="https://stock.adobe.com/images/iridescent-3d-shapes-collections/529289456" class="resource-link" target="_blank">
+        <div class="r-icon">📦</div>
+        <div class="r-info">
+          <span class="r-title">Adobe Stock — Iridescent 3D Shapes Collection</span>
+          <span class="r-desc">Includes a holographic plus/cross shape in PNG with transparent background. Available via free trial.</span>
+          <span class="r-url">stock.adobe.com/images/iridescent-3d-shapes-collections/529289456</span>
+        </div>
+      </a>
+      <a href="https://studio2am.co/products/3d-iridescent-hd-shapes" class="resource-link" target="_blank">
+        <div class="r-icon">💎</div>
+        <div class="r-info">
+          <span class="r-title">Studio 2AM — 3D Iridescent HD Shapes Pack (64 PNGs)</span>
+          <span class="r-desc">64 high-res holographic shapes (5000×5000px, transparent background, 300 DPI). Includes cross shapes.</span>
+          <span class="r-url">studio2am.co/products/3d-iridescent-hd-shapes</span>
+        </div>
+      </a>
+      <a href="https://www.freepik.com/premium-psd/y2k-cross-metallic-shape-3d-rendering-transparent-background_394325970.htm" class="resource-link" target="_blank">
+        <div class="r-icon">➕</div>
+        <div class="r-info">
+          <span class="r-title">Freepik — Y2K Cross Metallic Shape 3D Rendering</span>
+          <span class="r-desc">Exact match: metallic iridescent cross on transparent background. Premium PSD.</span>
+          <span class="r-url">freepik.com/premium-psd/y2k-cross-metallic-shape-3d-rendering...</span>
+        </div>
+      </a>
+    </div>
+  </div>
+</section>
+
+<!-- ═══════════════════════════════════════ -->
+<!-- ELEMENT 2: GRADIENT HEADLINE           -->
+<!-- ═══════════════════════════════════════ -->
+<section id="e2">
+  <div class="element-card">
+    <h3>Gradient Headline Typography <span class="badge badge-critical">Hero Visual</span></h3>
+    <p>"Easy way to shop anyway" — Bold italic display font with a warm-to-cool gradient fill. "Easy way" is in bold italic with gradient text. "to shop" is lighter weight, muted color. "anyway" is the largest, boldest word with the gradient continuing across it.</p>
+
+    <dl class="specs">
+      <dt>Font</dt><dd>Clash Display Bold Italic or Satoshi Bold Italic (geometric sans-serif)</dd>
+      <dt>Size</dt><dd>~56-72px for "Easy way", ~64-80px for "anyway"</dd>
+      <dt>Weight</dt><dd>"Easy way" = Bold Italic, "to shop" = Regular (muted), "anyway" = Bold</dd>
+      <dt>Gradient</dt><dd>Left-to-right: #C8A587 → #C29194 → #7C8898 (warm peach to cool gray)</dd>
+      <dt>Line Height</dt><dd>~1.1 (tight leading)</dd>
+    </dl>
+
+    <pre><code>/* Gradient text CSS */
+background: linear-gradient(90deg, #C8A587 0%, #C29194 35%, #7C8898 70%, #56549D 100%);
+-webkit-background-clip: text;
+-webkit-text-fill-color: transparent;
+font-style: italic;
+font-weight: 700;
+font-size: clamp(48px, 5vw, 72px);</code></pre>
+
+    <div class="resources">
+      <h4>Download Fonts</h4>
+      <a href="https://www.fontshare.com/fonts/clash-display" class="resource-link" target="_blank">
+        <div class="r-icon">Aa</div>
+        <div class="r-info">
+          <span class="r-title">Clash Display — Fontshare (FREE)</span>
+          <span class="r-desc">Best match for the heading. Neo-grotesk display font, 6 weights (Extralight–Bold). Free for personal & commercial use.</span>
+          <span class="r-url">fontshare.com/fonts/clash-display</span>
+        </div>
+      </a>
+      <a href="https://www.fontshare.com/fonts/satoshi" class="resource-link" target="_blank">
+        <div class="r-icon">Aa</div>
+        <div class="r-info">
+          <span class="r-title">Satoshi — Fontshare (FREE)</span>
+          <span class="r-desc">Alternative match. Modernist geometric sans-serif, 5 weights + italics. Great for both headings and body.</span>
+          <span class="r-url">fontshare.com/fonts/satoshi</span>
+        </div>
+      </a>
+      <a href="https://www.fontshare.com/?q=General+Sans" class="resource-link" target="_blank">
+        <div class="r-icon">Aa</div>
+        <div class="r-info">
+          <span class="r-title">General Sans — Fontshare (FREE)</span>
+          <span class="r-desc">Another close match. Clean geometric sans-serif with bold italic that closely resembles the hero headline.</span>
+          <span class="r-url">fontshare.com/?q=General+Sans</span>
+        </div>
+      </a>
+    </div>
+  </div>
+</section>
+
+<!-- ═══════════════════════════════════════ -->
+<!-- ELEMENT 3: WIREFRAME SPIRAL            -->
+<!-- ═══════════════════════════════════════ -->
+<section id="e3">
+  <div class="element-card">
+    <h3>Wireframe Spiral / Helix <span class="badge badge-key">Animated Element</span></h3>
+    <p>An animated 3D wireframe helix/spring shape positioned in the upper-center area of the hero. It's drawn with thin gray strokes (no fill) and appears to morph between a compressed spring and an extended helix. The animation is smooth and continuous.</p>
+
+    <dl class="specs">
+      <dt>Shape</dt><dd>3D helix/spring made of overlapping ellipses, ~8-12 rings</dd>
+      <dt>Stroke</dt><dd>~1.5px, color ~#3D3C6B (dark grayish-purple), no fill</dd>
+      <dt>Size</dt><dd>~250px wide × 180px tall</dd>
+      <dt>Animation</dt><dd>Morphs between compressed and extended states, continuous loop ~5-8s</dd>
+      <dt>Position</dt><dd>Upper area, center-left (between logo and nav)</dd>
+    </dl>
+
+    <div class="tip">
+      <strong>Recreation Approach</strong>
+      <p>Create with SVG: draw a series of overlapping ellipses at increasing Y positions with slight rotation. Animate via GSAP or CSS @keyframes to scale/translate each ellipse vertically. Alternatively, use Three.js with a TorusGeometry and wireframe material.</p>
+    </div>
+
+    <div class="resources">
+      <h4>Tutorials & Tools</h4>
+      <a href="https://gsap.com/community/forums/topic/24254-helixspiral-animation/" class="resource-link" target="_blank">
+        <div class="r-icon">🌀</div>
+        <div class="r-info">
+          <span class="r-title">GSAP Forum — Helix/Spiral Animation</span>
+          <span class="r-desc">Community discussion on recreating helix animations with GSAP. Includes SVG + motion path approach.</span>
+          <span class="r-url">gsap.com/community/forums/topic/24254-helixspiral-animation</span>
+        </div>
+      </a>
+      <a href="https://github.com/TomasHubelbauer/svg-3d" class="resource-link" target="_blank">
+        <div class="r-icon">📐</div>
+        <div class="r-info">
+          <span class="r-title">SVG 3D — GitHub (wireframe rendering)</span>
+          <span class="r-desc">Open-source tool to render 3D wireframe animations into animated SVGs.</span>
+          <span class="r-url">github.com/TomasHubelbauer/svg-3d</span>
+        </div>
+      </a>
+      <a href="https://prideout.net/blog/svg_wireframes/" class="resource-link" target="_blank">
+        <div class="r-icon">🔧</div>
+        <div class="r-info">
+          <span class="r-title">3D Wireframes in SVG — Tutorial</span>
+          <span class="r-desc">How to generate 3D wireframe SVGs with Python. Useful for creating the helix shape programmatically.</span>
+          <span class="r-url">prideout.net/blog/svg_wireframes</span>
+        </div>
+      </a>
+    </div>
+  </div>
+</section>
+
+<!-- ═══════════════════════════════════════ -->
+<!-- ELEMENT 4: DOODLE SMILEY               -->
+<!-- ═══════════════════════════════════════ -->
+<section id="e4">
+  <div class="element-card">
+    <h3>Hand-Drawn Doodle Smiley Face <span class="badge badge-accent">Decorative</span></h3>
+    <p>A white outlined, hand-drawn/wobbly smiley face sticker. It has an irregular circular outline (not a perfect circle), two mismatched quotation-mark-like eyes (like ") and a curved smile. Positioned floating above the holographic cross. Has a subtle bobbing animation.</p>
+
+    <dl class="specs">
+      <dt>Style</dt><dd>White outline on transparent, hand-drawn/wobbly line art, not clean geometric</dd>
+      <dt>Stroke</dt><dd>~3px, white (#FFFFFF), no fill</dd>
+      <dt>Size</dt><dd>~80-100px</dd>
+      <dt>Eyes</dt><dd>Stylized quotation marks / zig-zag shapes (not circles)</dd>
+      <dt>Animation</dt><dd>Gentle floating/bobbing motion, ~4s loop, ease-in-out</dd>
+      <dt>Position</dt><dd>Top-right area, overlapping the holographic cross at its upper-left</dd>
+    </dl>
+
+    <div class="resources">
+      <h4>Download Resources</h4>
+      <a href="https://www.fffuel.co/dddoodle/" class="resource-link" target="_blank">
+        <div class="r-icon">✏️</div>
+        <div class="r-info">
+          <span class="r-title">fffuel — dddoodle (120+ free SVG doodles)</span>
+          <span class="r-desc">Free hand-drawn illustration pack in SVG. CC0 licensed. Includes smiley faces and quirky doodles.</span>
+          <span class="r-url">fffuel.co/dddoodle</span>
+        </div>
+      </a>
+      <a href="https://www.vecteezy.com/free-vector/smiley-doodle" class="resource-link" target="_blank">
+        <div class="r-icon">😊</div>
+        <div class="r-info">
+          <span class="r-title">Vecteezy — Smiley Doodle Vectors (5,700+ free)</span>
+          <span class="r-desc">Huge collection of hand-drawn smiley face vectors. Search for "wobbly" or "irregular" outline styles.</span>
+          <span class="r-url">vecteezy.com/free-vector/smiley-doodle</span>
+        </div>
+      </a>
+      <a href="https://www.flaticon.com/free-stickers/doodle" class="resource-link" target="_blank">
+        <div class="r-icon">🏷️</div>
+        <div class="r-info">
+          <span class="r-title">Flaticon — Doodle Stickers (96 free, SVG/PNG)</span>
+          <span class="r-desc">Free doodle sticker packs including quirky smiley faces in SVG and PNG.</span>
+          <span class="r-url">flaticon.com/free-stickers/doodle</span>
+        </div>
+      </a>
+    </div>
+  </div>
+</section>
+
+<!-- ═══════════════════════════════════════ -->
+<!-- ELEMENT 5: CIRCULAR TEXT BADGE          -->
+<!-- ═══════════════════════════════════════ -->
+<section id="e5">
+  <div class="element-card">
+    <h3>Rotating Circular Text Badge <span class="badge badge-key">Animated Element</span></h3>
+    <p>A white semi-circular badge at the bottom-center with "Go to shop online" text arranged in a circle around a central dot. The text continuously rotates clockwise. The badge itself is a white semi-circle that appears to peek up from the bottom edge.</p>
+
+    <dl class="specs">
+      <dt>Shape</dt><dd>White (#FFFFFF) semi-circle, ~140px diameter, clipped at bottom</dd>
+      <dt>Text</dt><dd>"Go to shop online" in monospace or typewriter-style font, ~11px, black</dd>
+      <dt>Center</dt><dd>Small black dot at the center of the circle</dd>
+      <dt>Animation</dt><dd>Continuous clockwise rotation, ~10s per revolution, linear timing</dd>
+      <dt>Position</dt><dd>Bottom-center, half-hidden below the card edge</dd>
+    </dl>
+
+    <pre><code>/* SVG textPath approach */
+&lt;svg viewBox="0 0 100 100"&gt;
+  &lt;defs&gt;
+    &lt;path id="circlePath" d="M 50,50 m -35,0 a 35,35 0 1,1 70,0 a 35,35 0 1,1 -70,0"/&gt;
+  &lt;/defs&gt;
+  &lt;text font-size="10" fill="#000"&gt;
+    &lt;textPath href="#circlePath"&gt;Go to shop online • Go to shop online •&lt;/textPath&gt;
+  &lt;/text&gt;
+&lt;/svg&gt;
+
+/* CSS rotation */
+@keyframes spin { to { transform: rotate(360deg); } }
+.rotating-text { animation: spin 10s linear infinite; }</code></pre>
+
+    <div class="resources">
+      <h4>Tutorials</h4>
+      <a href="https://www.kirupa.com/animations/spinning_circular_text.htm" class="resource-link" target="_blank">
+        <div class="r-icon">🔄</div>
+        <div class="r-info">
+          <span class="r-title">Kirupa — Spinning Circular Text (HTML/CSS/SVG)</span>
+          <span class="r-desc">Step-by-step tutorial for creating exactly this effect with SVG textPath and CSS animation.</span>
+          <span class="r-url">kirupa.com/animations/spinning_circular_text.htm</span>
+        </div>
+      </a>
+      <a href="https://css-tricks.com/set-text-on-a-circle/" class="resource-link" target="_blank">
+        <div class="r-icon">📝</div>
+        <div class="r-info">
+          <span class="r-title">CSS-Tricks — Set Text on a Circle</span>
+          <span class="r-desc">Classic reference article. Shows SVG textPath and CSS-only approaches for circular text.</span>
+          <span class="r-url">css-tricks.com/set-text-on-a-circle</span>
+        </div>
+      </a>
+      <a href="https://frontendmasters.com/blog/pure-css-circular-text-without-requiring-a-monospace-font/" class="resource-link" target="_blank">
+        <div class="r-icon">🎓</div>
+        <div class="r-info">
+          <span class="r-title">Frontend Masters — Pure CSS Circular Text</span>
+          <span class="r-desc">Modern technique using CSS transforms and trig functions. No JavaScript required.</span>
+          <span class="r-url">frontendmasters.com/blog/pure-css-circular-text...</span>
+        </div>
+      </a>
+      <a href="https://www.shadcn.io/text/circular-text" class="resource-link" target="_blank">
+        <div class="r-icon">⚛️</div>
+        <div class="r-info">
+          <span class="r-title">Shadcn/UI — Circular Text React Component</span>
+          <span class="r-desc">Ready-to-use React component with rotation animation, hover behaviors, built with Motion for React.</span>
+          <span class="r-url">shadcn.io/text/circular-text</span>
+        </div>
+      </a>
+    </div>
+  </div>
+</section>
+
+<!-- ═══════════════════════════════════════ -->
+<!-- ELEMENT 6: BRUSH STROKES               -->
+<!-- ═══════════════════════════════════════ -->
+<section id="e6">
+  <div class="element-card">
+    <h3>Organic Brush Strokes <span class="badge badge-detail">Decorative</span></h3>
+    <p>A cluster of 5-6 organic, finger-paint-like brush strokes in the bottom-left corner. They're dark charcoal gray (#2A2940 ish) on the dark background — very subtle. Vertical elongated teardrop shapes arranged in a fan-like pattern, leaning right.</p>
+
+    <dl class="specs">
+      <dt>Color</dt><dd>~#2A2940 to #3A3A55 (slightly lighter than background, very subtle)</dd>
+      <dt>Shape</dt><dd>5-6 vertical elongated brush marks, organic edges, ~80px tall each</dd>
+      <dt>Arrangement</dt><dd>Fanned out left-to-right, overlapping slightly</dd>
+      <dt>Position</dt><dd>Bottom-left corner of the card</dd>
+    </dl>
+
+    <div class="resources">
+      <h4>Download Resources</h4>
+      <a href="https://www.freepik.com/free-photos-vectors/brush-stroke-png" class="resource-link" target="_blank">
+        <div class="r-icon">🖌️</div>
+        <div class="r-info">
+          <span class="r-title">Freepik — Brush Stroke PNGs (free)</span>
+          <span class="r-desc">Free brush stroke vectors and PNGs. Search for "finger paint stroke" or "organic brush mark" in dark colors.</span>
+          <span class="r-url">freepik.com/free-photos-vectors/brush-stroke-png</span>
+        </div>
+      </a>
+      <a href="https://www.cleanpng.com/free/brush-stroke.html" class="resource-link" target="_blank">
+        <div class="r-icon">🎨</div>
+        <div class="r-info">
+          <span class="r-title">CleanPNG — Brush Stroke PNGs (transparent)</span>
+          <span class="r-desc">Curated collection of brush stroke PNGs with clean transparent backgrounds. Recolor to dark gray in your editor.</span>
+          <span class="r-url">cleanpng.com/free/brush-stroke.html</span>
+        </div>
+      </a>
+    </div>
+  </div>
+</section>
+
+<!-- ═══════════════════════════════════════ -->
+<!-- ELEMENT 7: SPHERE                       -->
+<!-- ═══════════════════════════════════════ -->
+<section id="e7">
+  <div class="element-card">
+    <h3>Holographic Sphere (Partial) <span class="badge badge-detail">Decorative</span></h3>
+    <p>A partial sphere/circle visible in the bottom-right corner, using the same holographic gradient palette as the cross. Only about 30% of the shape is visible — it peeks in from the right edge. The gradient appears blue-dominant on this element.</p>
+
+    <dl class="specs">
+      <dt>Shape</dt><dd>Circle/sphere with same holographic gradient, ~200px diameter</dd>
+      <dt>Gradient</dt><dd>Blue-dominant version of the holographic palette</dd>
+      <dt>Position</dt><dd>Bottom-right corner, mostly cropped off-canvas</dd>
+    </dl>
+
+    <div class="resources">
+      <h4>Download Resources</h4>
+      <a href="https://www.freepik.com/free-photos-vectors/holographic-3d-shape" class="resource-link" target="_blank">
+        <div class="r-icon">🔵</div>
+        <div class="r-info">
+          <span class="r-title">Freepik — Holographic 3D Shapes</span>
+          <span class="r-desc">Same collection as the cross. Look for sphere/orb shapes with iridescent gradients.</span>
+          <span class="r-url">freepik.com/free-photos-vectors/holographic-3d-shape</span>
+        </div>
+      </a>
+      <a href="https://unsplash.com/s/photos/holographic-gradient" class="resource-link" target="_blank">
+        <div class="r-icon">📸</div>
+        <div class="r-info">
+          <span class="r-title">Unsplash — Holographic Gradient Photos (free)</span>
+          <span class="r-desc">Free high-res holographic gradient images. Can use as texture fill on a CSS circle shape.</span>
+          <span class="r-url">unsplash.com/s/photos/holographic-gradient</span>
+        </div>
+      </a>
+    </div>
+  </div>
+</section>
+
+<!-- ═══════════════════════════════════════ -->
+<!-- ELEMENT 8: COLOR PALETTE                -->
+<!-- ═══════════════════════════════════════ -->
+<section id="e8">
+  <div class="element-card">
+    <h3>Color Palette & Background <span class="badge badge-critical">Foundation</span></h3>
+    <p>Every color extracted frame-by-frame from the video, with exact hex values.</p>
+
+    <h3>Backgrounds</h3>
+    <div class="color-row"><div class="swatch" style="background:#151422"></div><div class="color-info"><div class="hex">#151422</div><div class="usage">Main dark background (deep navy with purple undertone)</div></div></div>
+    <div class="color-row"><div class="swatch" style="background:#DDDFEC"></div><div class="color-info"><div class="hex">#DDDFEC</div><div class="usage">Outer device frame / lavender-gray surround</div></div></div>
+    <div class="color-row"><div class="swatch" style="background:#F8F9FB"></div><div class="color-info"><div class="hex">#F8F9FB</div><div class="usage">White card border / nav text / primary white</div></div></div>
+
+    <h3>Holographic Gradient</h3>
+    <div class="color-row"><div class="swatch" style="background:#C8A587"></div><div class="color-info"><div class="hex">#C8A587</div><div class="usage">Holo Gold — gradient start (warm entry)</div></div></div>
+    <div class="color-row"><div class="swatch" style="background:#C29194"></div><div class="color-info"><div class="hex">#C29194</div><div class="usage">Holo Rose — warm-cool transition point</div></div></div>
+    <div class="color-row"><div class="swatch" style="background:#56549D"></div><div class="color-info"><div class="hex">#56549D</div><div class="usage">Holo Purple — deep midpoint</div></div></div>
+    <div class="color-row"><div class="swatch" style="background:#3B5E98"></div><div class="color-info"><div class="hex">#3B5E98</div><div class="usage">Holo Blue — cool terminus</div></div></div>
+
+    <h3>Text Colors</h3>
+    <div class="color-row"><div class="swatch" style="background:#F8F9FB"></div><div class="color-info"><div class="hex">#F8F9FB</div><div class="usage">Heading white / nav text ("anyway", "Blog", "About")</div></div></div>
+    <div class="color-row"><div class="swatch" style="background:#9F9FAB"></div><div class="color-info"><div class="hex">#9F9FAB</div><div class="usage">Body text (paragraph description)</div></div></div>
+    <div class="color-row"><div class="swatch" style="background:#6E6D7B"></div><div class="color-info"><div class="hex">#6E6D7B</div><div class="usage">Muted secondary text</div></div></div>
+
+    <h3>Accent</h3>
+    <div class="color-row"><div class="swatch" style="background:#2563EB"></div><div class="color-info"><div class="hex">#2563EB</div><div class="usage">CTA "Start Building" button background</div></div></div>
+  </div>
+</section>
+
+<!-- ═══════════════════════════════════════ -->
+<!-- ELEMENT 9: CTA BUTTONS                 -->
+<!-- ═══════════════════════════════════════ -->
+<section id="e9">
+  <div class="element-card">
+    <h3>CTA Button Pair <span class="badge badge-key">Interactive</span></h3>
+    <p>Dual CTA pattern: primary solid button + secondary text link side by side.</p>
+
+    <dl class="specs">
+      <dt>Primary</dt><dd>"Start Building" — #2563EB background, white text, border-radius ~10px, padding ~12px 24px</dd>
+      <dt>Secondary</dt><dd>"View Demo" — white text, bold, underline below (blue #2563EB line, ~2px), no background</dd>
+      <dt>Font</dt><dd>~14px, medium weight, same font family as body</dd>
+      <dt>Gap</dt><dd>~24-32px between buttons</dd>
+    </dl>
+
+    <pre><code>.cta-primary {
+  background: #2563EB;
+  color: white;
+  border: none;
+  border-radius: 10px;
+  padding: 12px 24px;
+  font-weight: 600;
+  font-size: 14px;
+  cursor: pointer;
+}
+.cta-secondary {
+  color: #F8F9FB;
+  font-weight: 700;
+  font-size: 14px;
+  background: none;
+  border: none;
+  border-bottom: 2px solid #2563EB;
+  padding-bottom: 4px;
+  cursor: pointer;
+}</code></pre>
+  </div>
+</section>
+
+<!-- ═══════════════════════════════════════ -->
+<!-- ELEMENT 10: NAVIGATION                  -->
+<!-- ═══════════════════════════════════════ -->
+<section id="e10">
+  <div class="element-card">
+    <h3>Navigation & Layout Structure <span class="badge badge-key">Structure</span></h3>
+    <p>Minimal top navigation with asymmetric hero split layout.</p>
+
+    <dl class="specs">
+      <dt>Nav Left</dt><dd>Logo icon + "shopper" wordmark in white, ~16px</dd>
+      <dt>Nav Right</dt><dd>"Examples" "Blog" "About" links (white, ~14px, medium weight) + circle dot + "Search"</dd>
+      <dt>Layout</dt><dd>Asymmetric: ~55% left (text content) / ~45% right (visual art)</dd>
+      <dt>Container</dt><dd>Dark card (#151422) with ~24px border-radius, inside a white-bordered (#F8F9FB) rounded rect, inside a lavender (#DDDFEC) frame</dd>
+      <dt>Padding</dt><dd>~48px horizontal, ~32px vertical within the dark card</dd>
+    </dl>
+  </div>
+</section>
+
+<!-- ═══════════════════════════════════════ -->
+<!-- ELEMENT 11: DEVICE FRAME                -->
+<!-- ═══════════════════════════════════════ -->
+<section id="e11">
+  <div class="element-card">
+    <h3>Nested Device Frame <span class="badge badge-detail">Presentation</span></h3>
+    <p>The entire hero card is nested in a "device mockup" style frame with three layers: the dark content card, a white border frame, and an outer lavender-gray surround.</p>
+
+    <dl class="specs">
+      <dt>Inner</dt><dd>Dark card (#151422), border-radius: ~20px</dd>
+      <dt>Middle</dt><dd>White border (~8px thick, #F8F9FB), border-radius: ~24px</dd>
+      <dt>Outer</dt><dd>Lavender-gray (#DDDFEC) background filling the full viewport</dd>
+    </dl>
+
+    <pre><code>.outer-frame {
+  background: #DDDFEC;
+  padding: 40px;
+  min-height: 100vh;
+  display: grid;
+  place-items: center;
+}
+.white-border {
+  background: #F8F9FB;
+  border-radius: 24px;
+  padding: 8px;
+}
+.dark-card {
+  background: #151422;
+  border-radius: 20px;
+  overflow: hidden;
+  position: relative;
+}</code></pre>
+  </div>
+</section>
+
+<!-- ═══════════════════════════════════════ -->
+<!-- ELEMENT 12: LOGO                        -->
+<!-- ═══════════════════════════════════════ -->
+<section id="e12">
+  <div class="element-card">
+    <h3>Logo Mark <span class="badge badge-detail">Brand</span></h3>
+    <p>Small icon mark (appears to be a stylized shopping bag or abstract "f" shape with a checkerboard/split pattern) next to "shopper" wordmark in white. The icon has purple/pink tones.</p>
+
+    <dl class="specs">
+      <dt>Icon</dt><dd>~28×28px, abstract geometric mark with split-color pattern (purple + white)</dd>
+      <dt>Wordmark</dt><dd>"shopper" in lowercase, white, ~18px, regular weight, same font as body</dd>
+      <dt>Gap</dt><dd>~10px between icon and wordmark</dd>
+    </dl>
+
+    <div class="tip">
+      <strong>Recreation Tip</strong>
+      <p>Design your own mark in Figma or use an abstract geometric icon from Lucide or Phosphor Icons as a base, then apply the purple gradient fill. The wordmark is simply set in the body font at regular weight.</p>
+    </div>
+  </div>
+</section>
+
+<footer>
+  <p>Resource guide generated from frame-by-frame analysis of the Shopper hero page video.<br>All hex values extracted directly from pixel sampling. All external links lead to their original sources.</p>
+</footer>
+
+</div>
+</body>
+</html>

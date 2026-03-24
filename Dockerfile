@@ -57,5 +57,8 @@ ENV PYTHONDONTWRITEBYTECODE=1
 # Declare /app/data as a volume mount point
 VOLUME ["/app/data"]
 
-# Default command: run the monitor agents
-CMD ["python", "-m", "sibyl", "--agents", "monitor"]
+# Expose dashboard port (default: 8088)
+EXPOSE 8088
+
+# Default command: run all agents with dashboard enabled
+CMD ["python", "-m", "sibyl", "--agents", "all", "--dashboard", "--dashboard-port", "8088"]

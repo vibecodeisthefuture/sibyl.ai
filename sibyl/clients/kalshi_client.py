@@ -75,11 +75,51 @@ logger = logging.getLogger("sibyl.clients.kalshi")
 # Default Kalshi API base URL (v2 — current as of 2026)
 BASE_URL = "https://api.elections.kalshi.com/trade-api/v2"
 
+# Kalshi API rate limit tiers
+KALSHI_BASIC_TIER = {"read_per_second": 20.0, "write_per_second": 10.0}
+KALSHI_ADVANCED_TIER = {"read_per_second": 30.0, "write_per_second": 30.0}
 
-class RateLimiter:
-    """Simple token-bucket rate limiter.  Same implementation as Polymarket.
+
+class TieredRateLimiter:
+    """Tiered token-bucket rate limiter for Kalshi API access tiers.
+
+    Kalshi API Tiers:
+        Basic:    20 read/s, 10 write/s
+        Advanced: 30 read/s, 30 write/s
+    """
+
+    def __init__(self, read_per_second: float = 20.0, write_per_second: float = 10.0) -> None:
+        self._read_interval = 1.0 / read_per_second
+        self._write_interval = 1.0 / write_per_second
+        self._read_last: float = 0.0
+        self._write_last: float = 0.0
+        self._read_lock = asyncio.Lock()
+        self._write_lock = asyncio.Lock()
+
+    async def acquire_read(self) -> None:
+        """Wait until it's safe to make the next read (GET) request."""
+        async with self._read_lock:
+            now = time.monotonic()
+            wait = self._read_interval - (now - self._read_last)
+            if wait > 0:
+                await asyncio.sleep(wait)
+            self._read_last = time.monotonic()
+
+    async def acquire_write(self) -> None:
+        """Wait until it's safe to make the next write (POST/PUT/DELETE) request."""
+        async with self._write_lock:
+            now = time.monotonic()
+            wait = self._write_interval - (now - self._write_last)
+            if wait > 0:
+                await asyncio.sleep(wait)
+            self._write_last = time.monotonic()
+
+
+class _LegacyRateLimiter:
+    """Simple token-bucket rate limiter (legacy).  Same implementation as Polymarket.
 
     See polymarket_client.py for detailed explanation.
+    Kept for backward compatibility with code that may pass rate_limit= kwarg.
     """
 
     def __init__(self, max_per_second: float = 10.0) -> None:
@@ -163,7 +203,10 @@ def _sign_request(
         message.encode("utf-8"),
         padding.PSS(
             mgf=padding.MGF1(hashes.SHA256()),
-            salt_length=padding.PSS.MAX_LENGTH,
+            # IMPORTANT: Kalshi requires DIGEST_LENGTH (32 bytes for SHA-256),
+            # NOT MAX_LENGTH.  MAX_LENGTH produces a different signature that
+            # Kalshi rejects with INCORRECT_API_KEY_SIGNATURE.
+            salt_length=padding.PSS.DIGEST_LENGTH,
         ),
         hashes.SHA256(),
     )
@@ -188,7 +231,8 @@ class KalshiClient:
         key_id: str | None = None,
         private_key_path: str | None = None,
         base_url: str = BASE_URL,
-        rate_limit: float = 10.0,
+        tier: str = "basic",
+        rate_limit: float | None = None,
         timeout: float = 15.0,
     ) -> None:
         """Initialize the Kalshi client.
@@ -197,7 +241,10 @@ class KalshiClient:
             key_id:           Your Kalshi API key ID (from Kalshi dashboard).
             private_key_path: Path to the RSA private key file (PEM format).
             base_url:         API base URL (default: Kalshi v2 production).
-            rate_limit:       Max requests per second (default: 10).
+            tier:             API tier ("basic" or "advanced", default: "basic").
+            rate_limit:       (Deprecated) Legacy parameter for backward compatibility.
+                             If provided, creates a _LegacyRateLimiter with this limit.
+                             Otherwise, uses tier presets with TieredRateLimiter.
             timeout:          HTTP request timeout in seconds (default: 15).
         """
         self._key_id = key_id
@@ -209,7 +256,29 @@ class KalshiClient:
             logger.info("Kalshi RSA key loaded from %s", private_key_path)
 
         self._base_url = base_url.rstrip("/")  # Remove trailing slash
-        self._rate = RateLimiter(rate_limit)
+
+        # Initialize rate limiter based on tier or legacy rate_limit parameter
+        if rate_limit is not None:
+            # Backward compatibility: use legacy rate limiter
+            logger.info("Using legacy rate limiter with max_per_second=%.1f", rate_limit)
+            self._rate = _LegacyRateLimiter(rate_limit)
+        else:
+            # Use tiered rate limiter with presets
+            tier_lower = tier.lower()
+            if tier_lower == "basic":
+                limits = KALSHI_BASIC_TIER
+            elif tier_lower == "advanced":
+                limits = KALSHI_ADVANCED_TIER
+            else:
+                raise ValueError(f"Invalid tier: {tier}. Must be 'basic' or 'advanced'.")
+            logger.info(
+                "Kalshi client initialized with %s tier: %d read/s, %d write/s",
+                tier_lower,
+                int(limits["read_per_second"]),
+                int(limits["write_per_second"]),
+            )
+            self._rate = TieredRateLimiter(**limits)
+
         self._timeout = timeout
         self._client: httpx.AsyncClient | None = None  # Lazily created
 
@@ -238,15 +307,31 @@ class KalshiClient:
 
         If the client is not authenticated, returns an empty dict (no headers).
 
+        IMPORTANT: The path signed MUST be the FULL path including the API prefix
+        (e.g., /trade-api/v2/portfolio/balance), NOT just the relative path
+        (/portfolio/balance).  Kalshi's server reconstructs the full path from
+        the request and verifies the signature against it.
+
         The headers are:
           KALSHI-ACCESS-KEY:       Your API key ID
           KALSHI-ACCESS-TIMESTAMP: Current Unix timestamp (milliseconds)
-          KALSHI-ACCESS-SIGNATURE: RSA-PSS signature of (timestamp + method + path)
+          KALSHI-ACCESS-SIGNATURE: RSA-PSS signature of (timestamp + method + full_path)
         """
         if not self.is_authenticated:
             return {}
+
+        # Build the FULL path for signing.  If path is relative (/events),
+        # prepend the API prefix extracted from the base_url.
+        # Example: base_url = "https://api.elections.kalshi.com/trade-api/v2"
+        #          path = "/events"
+        #          sign_path = "/trade-api/v2/events"
+        from urllib.parse import urlparse
+        parsed = urlparse(self._base_url)
+        api_prefix = parsed.path.rstrip("/")  # e.g., "/trade-api/v2"
+        sign_path = f"{api_prefix}{path}" if not path.startswith(api_prefix) else path
+
         ts_ms = int(time.time() * 1000)
-        sig = _sign_request(self._private_key, ts_ms, method, path)  # type: ignore[arg-type]
+        sig = _sign_request(self._private_key, ts_ms, method, sign_path)  # type: ignore[arg-type]
         return {
             "KALSHI-ACCESS-KEY": self._key_id,  # type: ignore[dict-item]
             "KALSHI-ACCESS-TIMESTAMP": str(ts_ms),
@@ -267,8 +352,21 @@ class KalshiClient:
 
         Same retry pattern as Polymarket (3 attempts, exponential backoff).
         On 429 responses, re-signs the request (timestamp changes each retry).
+
+        Rate limiting is tiered by HTTP method:
+        - GET requests use read rate limit
+        - POST/PUT/DELETE requests use write rate limit
         """
-        await self._rate.acquire()
+        # Apply appropriate rate limit tier based on HTTP method
+        if isinstance(self._rate, TieredRateLimiter):
+            if method.upper() == "GET":
+                await self._rate.acquire_read()
+            else:
+                await self._rate.acquire_write()
+        else:
+            # Legacy rate limiter (backward compatibility)
+            await self._rate.acquire()  # type: ignore[attr-defined]
+
         client = await self._ensure_client()
         url = f"{self._base_url}{path}"
         headers = self._auth_headers(method, path) if auth else {}
@@ -312,6 +410,8 @@ class KalshiClient:
         cursor: str | None = None,
         status: str | None = None,
         with_nested_markets: bool = True,
+        series_ticker: str | None = None,
+        category: str | None = None,
     ) -> dict:
         """Fetch paginated event listing.
 
@@ -320,6 +420,8 @@ class KalshiClient:
             cursor:               Pagination cursor from a previous response.
             status:               Filter by status ("open", "closed").
             with_nested_markets:  If True, include nested market data in response.
+            series_ticker:        Filter by series ticker (e.g., "KXHIGHCHI").
+            category:             Filter by Kalshi category (e.g., "Climate and Weather").
 
         Returns:
             Dict with "events" (list) and "cursor" (string or None).
@@ -331,6 +433,10 @@ class KalshiClient:
             params["status"] = status
         if with_nested_markets:
             params["with_nested_markets"] = "true"
+        if series_ticker:
+            params["series_ticker"] = series_ticker
+        if category:
+            params["category"] = category
         data = await self._get("/events", params)
         if isinstance(data, dict):
             return data

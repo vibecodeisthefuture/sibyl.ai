@@ -111,7 +111,11 @@ class SignalGenerator(BaseAgent):
         self.logger.info("Signal Generator started")
 
     async def run_cycle(self) -> None:
-        """Read detection events, score them, and write signals to the database."""
+        """Read detection events, score them, and write signals to the database.
+
+        Also scans for cross-platform arbitrage opportunities independently
+        of detection events (Sprint 7).
+        """
 
         # Get detection events from MarketIntelligenceAgent (or injected for testing)
         if self._injected_detections:
@@ -120,34 +124,36 @@ class SignalGenerator(BaseAgent):
         elif self._intel_agent:
             detections = self._intel_agent.get_and_clear_detections()
         else:
-            return  # No source of detections
+            detections = []
 
-        if not detections:
-            return  # Nothing to process this cycle
-
-        self.logger.info("Processing %d detection events", len(detections))
-
-        # Step 1: Group detections by market_id
-        by_market: dict[str, list[dict]] = defaultdict(list)
-        for det in detections:
-            by_market[det["market_id"]].append(det)
-
-        # Step 2: Score and create signals for each market
         signals_created = 0
-        min_modes_for_composite = int(
-            self._composite_config.get("high_conviction_modes_required", 2)
-        )
 
-        for market_id, market_detections in by_market.items():
-            signal = await self._score_and_create_signal(
-                market_id, market_detections, min_modes_for_composite
+        if detections:
+            self.logger.info("Processing %d detection events", len(detections))
+
+            # Step 1: Group detections by market_id
+            by_market: dict[str, list[dict]] = defaultdict(list)
+            for det in detections:
+                by_market[det["market_id"]].append(det)
+
+            # Step 2: Score and create signals for each market
+            min_modes_for_composite = int(
+                self._composite_config.get("high_conviction_modes_required", 2)
             )
-            if signal:
-                signals_created += 1
+
+            for market_id, market_detections in by_market.items():
+                signal = await self._score_and_create_signal(
+                    market_id, market_detections, min_modes_for_composite
+                )
+                if signal:
+                    signals_created += 1
+
+        # Step 3: Scan for cross-platform arbitrage opportunities
+        arb_signals = await self._scan_arbitrage_opportunities()
+        signals_created += arb_signals
 
         if signals_created:
-            self.logger.info("Created %d new signals from %d detections",
-                             signals_created, len(detections))
+            self.logger.info("Created %d total signals this cycle", signals_created)
 
     async def stop(self) -> None:
         self.logger.info("Signal Generator stopped")
@@ -349,6 +355,148 @@ class SignalGenerator(BaseAgent):
                 parts.append(f"Wall at {details.get('price', 0):.2f}")
 
         return " | ".join(parts)
+
+    # ── Cross-Platform Arbitrage (Sprint 7) ──────────────────────────
+
+    async def _scan_arbitrage_opportunities(self) -> int:
+        """Scan system_state for cross-platform divergence alerts and create
+        ARBITRAGE signals for Kalshi markets with exploitable price gaps.
+
+        The CrossPlatformSyncAgent writes divergence alerts as:
+            key:   arb_divergence_{poly_id}_{kalshi_id}
+            value: "Polymarket=0.700 Kalshi=0.580 spread=0.120 sim=0.75"
+
+        This method reads those alerts, parses the spread, and creates ARBITRAGE
+        signals on the Kalshi side (since we can only trade on Kalshi).
+
+        Returns:
+            Number of arbitrage signals created.
+        """
+        # Find fresh divergence alerts (updated in last 10 minutes)
+        alerts = await self.db.fetchall(
+            """SELECT key, value, updated_at FROM system_state
+               WHERE key LIKE 'arb_divergence_%'
+                 AND updated_at >= datetime('now', '-10 minutes')"""
+        )
+
+        if not alerts:
+            return 0
+
+        created = 0
+        for alert in alerts:
+            try:
+                parsed = self._parse_divergence_alert(alert["key"], alert["value"])
+                if not parsed:
+                    continue
+
+                kalshi_id = parsed["kalshi_id"]
+                spread = parsed["spread"]
+                poly_price = parsed["poly_price"]
+                kalshi_price = parsed["kalshi_price"]
+
+                # Only create signal if spread is large enough for profitable arb
+                # Minimum spread threshold: 8% (to cover fees + slippage)
+                min_arb_spread = float(
+                    self._composite_config.get("min_arb_spread", 0.08)
+                )
+                if spread < min_arb_spread:
+                    continue
+
+                # Check if we already have a recent ARBITRAGE signal for this market
+                existing = await self.db.fetchone(
+                    """SELECT id FROM signals
+                       WHERE market_id = ? AND signal_type = 'ARBITRAGE'
+                         AND timestamp >= datetime('now', '-30 minutes')""",
+                    (kalshi_id,),
+                )
+                if existing:
+                    continue  # Don't duplicate
+
+                # Confidence scales with spread size (larger spread = more confident)
+                # Base: 0.65, +0.10 for each 5% of additional spread beyond threshold
+                confidence = min(0.65 + ((spread - min_arb_spread) / 0.05) * 0.10, 0.92)
+
+                # EV: the spread itself represents the theoretical profit
+                # Adjusted down by 30% for execution risk (slippage, timing)
+                ev_estimate = round(spread * 0.70, 4)
+
+                # Determine direction: buy on the cheaper platform
+                # Since we only trade Kalshi, the side depends on which is cheaper
+                if kalshi_price < poly_price:
+                    reasoning = (
+                        f"ARBITRAGE: Kalshi ({kalshi_price:.3f}) underpriced vs "
+                        f"Polymarket ({poly_price:.3f}), spread={spread:.3f}. "
+                        f"Buy YES on Kalshi."
+                    )
+                else:
+                    reasoning = (
+                        f"ARBITRAGE: Kalshi ({kalshi_price:.3f}) overpriced vs "
+                        f"Polymarket ({poly_price:.3f}), spread={spread:.3f}. "
+                        f"Buy NO on Kalshi."
+                    )
+
+                await self.db.execute(
+                    """INSERT INTO signals
+                       (market_id, signal_type, confidence, ev_estimate, status,
+                        detection_modes_triggered, reasoning)
+                       VALUES (?, 'ARBITRAGE', ?, ?, 'PENDING', 'CROSS_PLATFORM_ARB', ?)""",
+                    (kalshi_id, confidence, ev_estimate, reasoning),
+                )
+                created += 1
+
+            except Exception:
+                self.logger.exception("Failed to process arb alert: %s", alert["key"])
+                continue
+
+        if created:
+            await self.db.commit()
+            self.logger.info("Created %d arbitrage signals from divergence alerts", created)
+
+        return created
+
+    @staticmethod
+    def _parse_divergence_alert(key: str, value: str) -> dict | None:
+        """Parse a divergence alert from system_state.
+
+        Args:
+            key:   "arb_divergence_{poly_id}_{kalshi_id}"
+            value: "Polymarket=0.700 Kalshi=0.580 spread=0.120 sim=0.75"
+
+        Returns:
+            Dict with kalshi_id, poly_price, kalshi_price, spread, similarity
+            or None if parsing fails.
+        """
+        try:
+            # Parse the key to extract market IDs
+            if not key.startswith("arb_divergence_"):
+                return None
+            remainder = key[len("arb_divergence_"):]
+            parts = remainder.split("_", 1)
+            if len(parts) < 2 or not parts[0] or not parts[1]:
+                return None
+            poly_id, kalshi_id = parts[0], parts[1]
+
+            # Parse the value string
+            tokens = {}
+            for token in value.split():
+                if "=" in token:
+                    k, v = token.split("=", 1)
+                    tokens[k.lower()] = v
+
+            poly_price = float(tokens.get("polymarket", 0))
+            kalshi_price = float(tokens.get("kalshi", 0))
+            spread = float(tokens.get("spread", 0))
+
+            return {
+                "poly_id": poly_id,
+                "kalshi_id": kalshi_id,
+                "poly_price": poly_price,
+                "kalshi_price": kalshi_price,
+                "spread": spread,
+                "similarity": float(tokens.get("sim", 0)),
+            }
+        except (ValueError, IndexError):
+            return None
 
     # ── Testing API ───────────────────────────────────────────────────
 

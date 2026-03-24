@@ -35,3 +35,91 @@ category_caps:
   science_tech: 0.15
   economics: 0.15
   other: 0.10
+
+# ─── Blitz Partition (Sprint 14) ───────────────────────────────────────
+# "Blitzkrieg" last-second execution strategy.
+# Targets markets closing within ≤90 seconds where confidence exceeds 85%.
+# Category-agnostic — exploits near-certain outcomes across all market types.
+# Capital pool: 20% of SGE allocation (~14% of total portfolio).
+#
+# KEY PRINCIPLE: Speed over patience. Market orders for instant fill.
+# The edge is in catching markets where the outcome is effectively decided
+# but the price hasn't fully converged to 0 or 1.
+blitz:
+  enabled: true
+  capital_pct_of_sge: 0.20           # 20% of SGE pool reserved for Blitz
+  scanner:
+    poll_interval_seconds: 1.0        # 1-second scan cycle (speed is everything)
+    close_window_seconds: 90          # Only target markets closing in ≤90s
+    min_close_window_seconds: 5       # Skip markets closing in <5s (no fill time)
+
+  entry_criteria:
+    min_confidence: 0.85              # Must be >85% confident
+    min_ev: 0.04                      # Minimum 4% expected value
+    min_price_gap: 0.05               # Price must be ≥5¢ from terminal (0 or 1)
+    max_price_gap: 0.30               # Skip if price is >30¢ from terminal
+                                      # (too risky for near-close entry)
+
+  risk_policy:
+    kelly_fraction: 0.25              # Aggressive Kelly for high-confidence plays
+    max_single_position_pct: 0.08     # 8% of Blitz pool per trade
+    max_concurrent_positions: 5       # Max 5 Blitz positions at once
+    per_trade_stop_loss_pct: 0.50     # Wider stops — positions resolve in seconds
+    circuit_breaker_drawdown_pct: 0.15  # -15% Blitz pool drawdown
+    daily_loss_limit_pct: 0.08        # -8% of Blitz pool per day
+    max_category_concentration: 0.40  # Max 40% of Blitz pool in one category
+
+  execution:
+    order_type: "market"              # Market orders for instant fill
+    style: "aggressive"               # No patience — fill immediately or miss
+    max_slippage_cents: 3             # Reject if slippage >3¢ from expected
+
+  # ── Applicable Market Types ─────────────────────────────────────────
+  # Categories and patterns where Blitz excels (category-agnostic but
+  # these represent the highest-opportunity areas).
+  target_patterns:
+    crypto_price_windows:
+      description: "BTC/ETH/SOL price at close of 15min/1hr/4hr windows"
+      keywords: ["bitcoin", "btc", "ethereum", "eth", "solana", "sol", "crypto"]
+      category_hint: "Crypto"
+      close_window_typical: "15min-1hr"
+      edge_source: "Price momentum near close; outcome often decided 60s out"
+
+    weather_temperature:
+      description: "Will temperature in City X be above/below Y°F at close"
+      keywords: ["temperature", "degrees", "weather", "fahrenheit", "celsius"]
+      category_hint: "Weather"
+      close_window_typical: "daily close"
+      edge_source: "NWS nowcast vs market price near close; sensors confirm"
+
+    sports_final_minutes:
+      description: "Game outcome when score differential is decisive"
+      keywords: ["score", "points", "goals", "touchdown", "halftime",
+                 "quarter", "inning", "nba", "nfl", "mlb", "nhl"]
+      category_hint: "Sports"
+      close_window_typical: "in-game"
+      edge_source: "Large lead + little time = near-certain outcome"
+
+    economic_data_windows:
+      description: "Fed rate, CPI, jobs report resolution windows"
+      keywords: ["fed rate", "cpi", "inflation", "nonfarm",
+                 "unemployment", "gdp", "fomc", "bls"]
+      category_hint: "Economics"
+      close_window_typical: "post-release"
+      edge_source: "Data released but market hasn't fully priced in"
+
+    stock_price_close:
+      description: "Will stock X close above/below $Y"
+      keywords: ["stock", "share price", "market cap", "nasdaq",
+                 "s&p", "dow jones", "nyse"]
+      category_hint: "Financials"
+      close_window_typical: "market close"
+      edge_source: "Intraday price near close makes outcome near-certain"
+
+    culture_event_outcome:
+      description: "Award shows, election night calls, streaming records"
+      keywords: ["oscar", "emmy", "grammy", "award", "nomination",
+                 "premiere", "box office", "golden globe"]
+      category_hint: "Culture"
+      close_window_typical: "event-based"
+      edge_source: "Live results/leaks before market price converges"

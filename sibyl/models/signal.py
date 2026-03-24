@@ -22,6 +22,14 @@ class SignalType(str, Enum):
     SCOUT_CONTESTED = "SCOUT_CONTESTED"
     RESOLUTION_OPPORTUNITY = "RESOLUTION_OPPORTUNITY"
     COMPOSITE_HIGH_CONVICTION = "COMPOSITE_HIGH_CONVICTION"
+    # Pipeline-generated signal types (Sprint 13)
+    DATA_FUNDAMENTAL = "DATA_FUNDAMENTAL"
+    DATA_SENTIMENT = "DATA_SENTIMENT"
+    DATA_MOMENTUM = "DATA_MOMENTUM"
+    DATA_DIVERGENCE = "DATA_DIVERGENCE"
+    DATA_CATALYST = "DATA_CATALYST"
+    # Blitz partition signal type (Sprint 14)
+    BLITZ_LAST_SECOND = "BLITZ_LAST_SECOND"
 
 
 class EngineRouting(str, Enum):
@@ -29,6 +37,7 @@ class EngineRouting(str, Enum):
     ACE = "ACE"
     BOTH = "BOTH"
     DEFERRED = "DEFERRED"
+    SGE_BLITZ = "SGE_BLITZ"  # Sprint 14: Blitz fast-path routing
 
 
 class SignalStatus(str, Enum):
@@ -37,6 +46,7 @@ class SignalStatus(str, Enum):
     DEFERRED = "DEFERRED"
     VOID = "VOID"
     REJECTED = "REJECTED"
+    BLITZ_READY = "BLITZ_READY"  # Sprint 14: Blitz fast-path signal
 
 
 class CorrelationStatus(str, Enum):

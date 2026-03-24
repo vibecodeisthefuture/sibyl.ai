@@ -1,0 +1,89 @@
+# ─── X (Twitter) Sentiment & News Agent Configuration ───
+#
+# TIER STRATEGY: Designed for X API Basic tier ($200/mo).
+#   - Basic tier: ~10,000 tweets/month read via Recent Search
+#   - Basic tier: 7-day search history
+#   - Basic tier: 60 requests/15 min on Recent Search
+#   - Filtered Stream: may require Pro ($5,000/mo) — agent auto-detects
+#     and falls back to Recent Search polling if stream unavailable.
+#
+# BUDGET OPTIMIZATION:
+#   - 10,000 tweets/month ÷ 30 days = ~333 tweets/day
+#   - Each search query returns ~10 tweets on average
+#   - That gives us ~33 queries/day = ~1.4 queries/hour
+#   - We batch queries per market priority to maximize coverage
+#   - High-priority markets get searched every 15 min; others every 60 min
+
+# ── Collection Mode ─────────────────────────────────────────────────
+collection:
+  # Primary mode: "stream" (filtered stream) or "search" (recent search polling)
+  # Agent auto-downgrades to "search" if stream endpoint returns 403/401
+  preferred_mode: "stream"
+
+  # Recent Search polling interval (seconds) — used when stream unavailable
+  # 900s = 15 min for high-priority markets
+  search_poll_interval_seconds: 900
+  # Low-priority markets polled less aggressively (60 min)
+  search_poll_interval_low_priority_seconds: 3600
+
+  # Maximum tweets to read per day (budget guard)
+  # Basic tier: ~333/day. We set to 300 for headroom.
+  daily_tweet_budget: 300
+  # Maximum search queries per 15-minute window (Basic: 60 max, we use 80%)
+  max_queries_per_15min: 48
+
+  # Tweet fields to request on every API call
+  tweet_fields: "id,text,created_at,author_id,public_metrics,context_annotations,entities,possibly_sensitive,referenced_tweets,conversation_id,lang"
+  user_fields: "id,name,username,verified,verified_type,public_metrics,created_at,description"
+  expansions: "author_id,referenced_tweets.id"
+
+# ── Sentiment Processing ────────────────────────────────────────────
+sentiment:
+  aggregation_window_minutes: 5
+  min_tweets_per_window: 10
+  sentiment_shift_threshold: 0.15
+  volume_z_score_threshold: 1.5
+  bias_risk_ceiling: 0.60
+  authenticity_floor_pct: 0.70
+
+  # Two-pass NLP: rule-based irony pre-filter + keyword sentiment
+  # Full FinBERT integration deferred — using keyword-based scoring
+  # with reach weighting for now (no GPU dependency).
+  use_keyword_sentiment: true
+  # Positive/negative keyword lists are embedded in the agent code.
+  # Future: switch to FinBERT when GPU workstation is online.
+
+# ── Bias Detection ──────────────────────────────────────────────────
+bias:
+  political_homogeneity_threshold: 0.60
+  political_homogeneity_penalty: 0.30
+  cascade_diversity_threshold: 0.30
+  cascade_penalty: 0.25
+  source_concentration_threshold: 0.50
+  source_concentration_penalty: 0.20
+  # Recency bias: require 2 consecutive windows with sustained shift
+  sustained_windows_required: 2
+  # Confirmation delay after volume spike (minutes)
+  confirmation_delay_minutes: 15
+
+# ── Authenticity Checks ─────────────────────────────────────────────
+authenticity:
+  min_account_age_days: 90
+  min_followers: 20
+  max_following_to_followers_ratio: 25.0
+  min_tweet_history: 50
+  max_posts_per_hour: 50
+  linguistic_similarity_threshold: 0.85
+  coordinated_cluster_pct: 0.30
+  burst_pct_threshold: 0.40
+  burst_window_seconds: 30
+  volume_spike_multiplier: 5.0
+  min_tweet_authenticity_score: 0.50
+
+# ── Signal Routing Hints ────────────────────────────────────────────
+routing:
+  large_shift_threshold: 0.30
+  sustained_windows_required: 2
+
+# ── Agent Polling ───────────────────────────────────────────────────
+poll_interval_seconds: 300   # 5 minutes — process buffered tweets

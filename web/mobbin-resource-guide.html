@@ -1,0 +1,1241 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Mobbin Landing Page — Visual Element Breakdown & Resource Guide</title>
+<style>
+  @import url('https://fonts.googleapis.com/css2?family=Outfit:wght@300;400;500;600;700&family=IBM+Plex+Mono:wght@400;500;600&display=swap');
+
+  :root {
+    --bg: #FAFAFA;
+    --card: #FFFFFF;
+    --surface: #F3F3F3;
+    --border: #E5E5E5;
+    --border-hover: #CCCCCC;
+    --ink: #1A1A1A;
+    --ink-sec: #555555;
+    --ink-muted: #8A8A8A;
+    --accent: #1A1A1A;
+    --accent-light: #333333;
+    --teal: #0D9488;
+    --teal-light: #14B8A6;
+    --amber: #D97706;
+    --rose: #E11D48;
+    --violet: #7C3AED;
+    --blue: #2563EB;
+    --radius: 16px;
+  }
+
+  * { margin: 0; padding: 0; box-sizing: border-box; }
+
+  body {
+    font-family: 'Outfit', system-ui, sans-serif;
+    background: var(--bg);
+    color: var(--ink);
+    line-height: 1.7;
+    -webkit-font-smoothing: antialiased;
+  }
+
+  .container { max-width: 1080px; margin: 0 auto; padding: 0 32px; }
+
+  /* ─── Header ─── */
+  header {
+    padding: 80px 0 56px;
+    text-align: center;
+    border-bottom: 1px solid var(--border);
+  }
+  header .label {
+    display: inline-flex;
+    align-items: center;
+    gap: 8px;
+    font-family: 'IBM Plex Mono', monospace;
+    font-size: 11px;
+    text-transform: uppercase;
+    letter-spacing: 2.5px;
+    color: var(--teal);
+    background: rgba(13,148,136,0.07);
+    padding: 6px 16px;
+    border-radius: 20px;
+    margin-bottom: 28px;
+  }
+  header .label::before {
+    content: '';
+    width: 6px;
+    height: 6px;
+    background: var(--teal);
+    border-radius: 50%;
+    display: inline-block;
+  }
+  header h1 {
+    font-size: 44px;
+    font-weight: 700;
+    line-height: 1.15;
+    margin-bottom: 16px;
+    letter-spacing: -1.5px;
+    color: var(--ink);
+  }
+  header h1 span {
+    background: linear-gradient(135deg, #1A1A1A 0%, #555 40%, #0D9488 70%, #14B8A6 100%);
+    -webkit-background-clip: text;
+    -webkit-text-fill-color: transparent;
+    background-clip: text;
+  }
+  header p {
+    color: var(--ink-sec);
+    font-size: 16px;
+    max-width: 580px;
+    margin: 0 auto;
+    font-weight: 400;
+  }
+
+  /* ─── Table of Contents ─── */
+  .toc {
+    padding: 40px 0;
+    border-bottom: 1px solid var(--border);
+  }
+  .toc h2 {
+    font-size: 12px;
+    text-transform: uppercase;
+    letter-spacing: 2px;
+    color: var(--ink-muted);
+    margin-bottom: 20px;
+    font-weight: 600;
+  }
+  .toc-grid {
+    display: grid;
+    grid-template-columns: repeat(auto-fill, minmax(240px, 1fr));
+    gap: 6px;
+  }
+  .toc-grid a {
+    display: flex;
+    align-items: center;
+    gap: 10px;
+    color: var(--ink-sec);
+    text-decoration: none;
+    font-size: 14px;
+    padding: 10px 14px;
+    border-radius: 10px;
+    transition: all 0.2s;
+    font-weight: 400;
+  }
+  .toc-grid a:hover {
+    background: var(--card);
+    color: var(--ink);
+    box-shadow: 0 1px 3px rgba(0,0,0,0.06);
+  }
+  .toc-grid a .num {
+    font-family: 'IBM Plex Mono', monospace;
+    font-size: 11px;
+    color: var(--teal);
+    min-width: 24px;
+    font-weight: 500;
+  }
+
+  /* ─── Sections ─── */
+  section { padding: 52px 0; border-bottom: 1px solid var(--border); }
+  section:last-of-type { border-bottom: none; }
+
+  .section-label {
+    font-family: 'IBM Plex Mono', monospace;
+    font-size: 11px;
+    text-transform: uppercase;
+    letter-spacing: 2px;
+    color: var(--teal);
+    margin-bottom: 6px;
+    font-weight: 500;
+  }
+  section h2 {
+    font-size: 26px;
+    font-weight: 700;
+    margin-bottom: 8px;
+    letter-spacing: -0.5px;
+  }
+  section .section-desc {
+    color: var(--ink-sec);
+    font-size: 15px;
+    margin-bottom: 28px;
+    max-width: 700px;
+  }
+
+  /* ─── Element Cards ─── */
+  .element-card {
+    background: var(--card);
+    border: 1px solid var(--border);
+    border-radius: var(--radius);
+    padding: 28px;
+    margin-bottom: 20px;
+    box-shadow: 0 1px 3px rgba(0,0,0,0.03);
+    transition: box-shadow 0.2s;
+  }
+  .element-card:hover {
+    box-shadow: 0 4px 16px rgba(0,0,0,0.06);
+  }
+  .element-card h3 {
+    margin-top: 0;
+    font-size: 19px;
+    font-weight: 600;
+    display: flex;
+    align-items: center;
+    gap: 10px;
+    flex-wrap: wrap;
+    letter-spacing: -0.3px;
+  }
+  .element-card h3 .badge {
+    font-family: 'IBM Plex Mono', monospace;
+    font-size: 10px;
+    text-transform: uppercase;
+    letter-spacing: 1px;
+    padding: 3px 10px;
+    border-radius: 6px;
+    font-weight: 600;
+  }
+  .badge-critical { background: rgba(225,29,72,0.08); color: var(--rose); }
+  .badge-key { background: rgba(37,99,235,0.08); color: var(--blue); }
+  .badge-accent { background: rgba(124,58,237,0.08); color: var(--violet); }
+  .badge-detail { background: rgba(13,148,136,0.08); color: var(--teal); }
+  .badge-structure { background: rgba(217,119,6,0.08); color: var(--amber); }
+
+  .element-card > p {
+    color: var(--ink-sec);
+    font-size: 14px;
+    margin: 10px 0 0;
+    line-height: 1.65;
+  }
+
+  /* ─── Specs Grid ─── */
+  .specs {
+    display: grid;
+    grid-template-columns: 140px 1fr;
+    gap: 4px 16px;
+    margin: 18px 0;
+    font-size: 14px;
+  }
+  .specs dt {
+    color: var(--ink-muted);
+    font-size: 12px;
+    text-transform: uppercase;
+    letter-spacing: 0.5px;
+    padding-top: 2px;
+    font-weight: 500;
+  }
+  .specs dd { color: var(--ink-sec); }
+
+  /* ─── Resource Links ─── */
+  .resources {
+    margin-top: 20px;
+    padding-top: 20px;
+    border-top: 1px solid var(--border);
+  }
+  .resources h4 {
+    font-size: 11px;
+    text-transform: uppercase;
+    letter-spacing: 1.5px;
+    color: var(--ink-muted);
+    margin-bottom: 12px;
+    font-weight: 600;
+  }
+  .resource-link {
+    display: flex;
+    align-items: flex-start;
+    gap: 12px;
+    padding: 12px 14px;
+    background: var(--surface);
+    border-radius: 12px;
+    margin-bottom: 8px;
+    text-decoration: none;
+    transition: all 0.2s;
+    border: 1px solid transparent;
+  }
+  .resource-link:hover {
+    border-color: var(--border-hover);
+    background: var(--card);
+    box-shadow: 0 2px 8px rgba(0,0,0,0.04);
+  }
+  .resource-link .r-icon {
+    width: 36px;
+    height: 36px;
+    border-radius: 8px;
+    background: var(--card);
+    border: 1px solid var(--border);
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    font-size: 16px;
+    flex-shrink: 0;
+    margin-top: 1px;
+  }
+  .resource-link .r-info { flex: 1; }
+  .resource-link .r-title {
+    color: var(--ink);
+    font-size: 14px;
+    font-weight: 600;
+    display: block;
+    margin-bottom: 2px;
+  }
+  .resource-link .r-desc {
+    color: var(--ink-muted);
+    font-size: 12px;
+    display: block;
+    line-height: 1.5;
+  }
+  .resource-link .r-url {
+    font-family: 'IBM Plex Mono', monospace;
+    font-size: 11px;
+    color: var(--teal);
+    display: block;
+    margin-top: 4px;
+    word-break: break-all;
+  }
+
+  /* ─── Color Swatches ─── */
+  .color-row {
+    display: flex;
+    align-items: center;
+    gap: 14px;
+    margin-bottom: 10px;
+  }
+  .swatch {
+    width: 40px;
+    height: 40px;
+    border-radius: 10px;
+    border: 1px solid rgba(0,0,0,0.08);
+    flex-shrink: 0;
+  }
+  .color-info .hex {
+    font-family: 'IBM Plex Mono', monospace;
+    font-size: 13px;
+    color: var(--ink);
+    font-weight: 500;
+  }
+  .color-info .usage {
+    font-size: 12px;
+    color: var(--ink-muted);
+  }
+
+  /* ─── Tip Box ─── */
+  .tip {
+    background: rgba(13,148,136,0.05);
+    border-left: 3px solid var(--teal);
+    border-radius: 0 10px 10px 0;
+    padding: 16px 20px;
+    margin: 20px 0;
+  }
+  .tip strong {
+    color: var(--teal);
+    font-size: 11px;
+    text-transform: uppercase;
+    letter-spacing: 1px;
+    display: block;
+    margin-bottom: 6px;
+  }
+  .tip p { color: var(--ink-sec); font-size: 13px; margin: 0; }
+
+  /* ─── Code Blocks ─── */
+  code {
+    font-family: 'IBM Plex Mono', monospace;
+    font-size: 12px;
+    background: var(--surface);
+    padding: 2px 7px;
+    border-radius: 4px;
+    color: var(--rose);
+  }
+  pre {
+    background: #1A1A1A;
+    border: 1px solid #333;
+    border-radius: 12px;
+    padding: 18px 22px;
+    overflow-x: auto;
+    margin: 14px 0;
+  }
+  pre code {
+    background: none;
+    padding: 0;
+    font-size: 12px;
+    line-height: 1.8;
+    color: #D4D4D8;
+  }
+  pre code .cm { color: #6B7280; }
+  pre code .prop { color: #7DD3FC; }
+  pre code .val { color: #A5F3FC; }
+  pre code .str { color: #BEF264; }
+  pre code .sel { color: #FCA5A5; }
+
+  /* ─── Preview Bar ─── */
+  .preview-bar {
+    height: 60px;
+    border-radius: 30px;
+    margin: 18px 0;
+    display: flex;
+    align-items: center;
+    padding: 12px 24px;
+    gap: 16px;
+    background: rgba(0,0,0,0.04);
+    backdrop-filter: blur(20px);
+    border: 1px solid var(--border);
+    overflow: hidden;
+  }
+  .preview-bar .nav-item {
+    font-size: 14px;
+    color: var(--ink-sec);
+    font-weight: 500;
+    padding: 6px 14px;
+    border-radius: 20px;
+    background: transparent;
+  }
+  .preview-bar .nav-active {
+    background: var(--ink);
+    color: white;
+  }
+  .preview-bar .logo-text {
+    font-weight: 700;
+    font-size: 16px;
+    color: var(--ink);
+    letter-spacing: -0.5px;
+    margin-right: auto;
+  }
+
+  /* ─── Animation Preview ─── */
+  .app-logo-stack {
+    display: flex;
+    align-items: flex-end;
+    justify-content: center;
+    gap: 0;
+    height: 100px;
+    margin: 18px 0;
+    position: relative;
+  }
+  .app-logo-stack .logo-card {
+    width: 80px;
+    height: 80px;
+    border-radius: 20px;
+    position: absolute;
+    transition: all 0.3s;
+  }
+  .app-logo-stack .logo-card:nth-child(1) {
+    background: linear-gradient(135deg, #FF385C, #FF6B81);
+    z-index: 3;
+    transform: translateY(0) scale(1);
+  }
+  .app-logo-stack .logo-card:nth-child(2) {
+    background: linear-gradient(135deg, #00C4CC, #7BDFF2);
+    z-index: 2;
+    transform: translateY(-8px) scale(0.85);
+  }
+  .app-logo-stack .logo-card:nth-child(3) {
+    background: linear-gradient(135deg, #5B4CDB, #8B5CF6);
+    z-index: 1;
+    transform: translateY(-16px) scale(0.7);
+  }
+
+  /* ─── Button Previews ─── */
+  .btn-preview {
+    display: inline-flex;
+    align-items: center;
+    gap: 12px;
+    margin: 12px 8px 12px 0;
+  }
+  .btn-primary {
+    background: var(--ink);
+    color: white;
+    border: none;
+    border-radius: 9999px;
+    padding: 11px 20px;
+    font-weight: 600;
+    font-size: 14px;
+    font-family: 'Outfit', sans-serif;
+    cursor: pointer;
+  }
+  .btn-secondary {
+    color: var(--ink);
+    border: 1px solid var(--border);
+    background: transparent;
+    border-radius: 9999px;
+    padding: 11px 20px;
+    font-weight: 600;
+    font-size: 14px;
+    font-family: 'Outfit', sans-serif;
+    cursor: pointer;
+    display: inline-flex;
+    align-items: center;
+    gap: 6px;
+  }
+
+  /* ─── Glass Preview ─── */
+  .glass-preview {
+    background: linear-gradient(135deg, #F0F4F8 0%, #E2E8F0 50%, #F8FAFC 100%);
+    border-radius: 16px;
+    padding: 32px;
+    margin: 18px 0;
+    position: relative;
+    overflow: hidden;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+  }
+  .glass-box {
+    background: rgba(255,255,255,0.72);
+    backdrop-filter: blur(24px);
+    border: 1px solid rgba(255,255,255,0.85);
+    border-radius: 30px;
+    padding: 12px 24px;
+    display: flex;
+    align-items: center;
+    gap: 20px;
+    box-shadow: 0 4px 24px rgba(0,0,0,0.06);
+    font-size: 14px;
+    font-weight: 500;
+    color: var(--ink-sec);
+  }
+  .glass-box span.logo-mock {
+    font-weight: 700;
+    color: var(--ink);
+    font-size: 16px;
+    letter-spacing: -0.3px;
+  }
+
+  .two-col {
+    display: grid;
+    grid-template-columns: 1fr 1fr;
+    gap: 20px;
+  }
+  @media (max-width: 768px) {
+    .two-col { grid-template-columns: 1fr; }
+    header h1 { font-size: 30px; }
+    .specs { grid-template-columns: 110px 1fr; }
+  }
+
+  footer {
+    padding: 48px 0 64px;
+    text-align: center;
+    color: var(--ink-muted);
+    font-size: 13px;
+    border-top: 1px solid var(--border);
+  }
+  footer a { color: var(--teal); text-decoration: none; }
+  footer a:hover { text-decoration: underline; }
+</style>
+</head>
+<body>
+
+<div class="container">
+<header>
+  <div class="label">Resource Guide</div>
+  <h1><span>Mobbin Landing Page</span> — Visual Element Breakdown</h1>
+  <p>Every visual element identified from Mobbin's landing page at mobbin.com, with exact specs, color values, CSS snippets, and links to matching resources.</p>
+</header>
+
+<nav class="toc">
+  <h2>Elements Identified</h2>
+  <div class="toc-grid">
+    <a href="#e1"><span class="num">01</span> Floating Glassmorphism Navbar</a>
+    <a href="#e2"><span class="num">02</span> Stacked App Logo Carousel</a>
+    <a href="#e3"><span class="num">03</span> Hero Headline Typography</a>
+    <a href="#e4"><span class="num">04</span> Dual CTA Button Pair</a>
+    <a href="#e5"><span class="num">05</span> Trust Bar — Company Logos</a>
+    <a href="#e6"><span class="num">06</span> iOS Screen Card Gallery</a>
+    <a href="#e7"><span class="num">07</span> Product Screenshot Sections</a>
+    <a href="#e8"><span class="num">08</span> Video & Storyboard Flows</a>
+    <a href="#e9"><span class="num">09</span> Testimonial Cards (Masonry)</a>
+    <a href="#e10"><span class="num">10</span> Color Palette & Theming</a>
+    <a href="#e11"><span class="num">11</span> Typography System</a>
+    <a href="#e12"><span class="num">12</span> Layout & Spacing System</a>
+    <a href="#e13"><span class="num">13</span> Bottom CTA (JoinSection)</a>
+    <a href="#e14"><span class="num">14</span> Scrolling App Marquee</a>
+  </div>
+</nav>
+
+<!-- ═══════════════════════════════════════ -->
+<!-- ELEMENT 1: FLOATING GLASSMORPHISM NAV  -->
+<!-- ═══════════════════════════════════════ -->
+<section id="e1">
+  <div class="element-card">
+    <h3>Floating Glassmorphism Navbar <span class="badge badge-critical">Hero Visual</span></h3>
+    <p>A pill-shaped navigation bar that floats centered above the page content, positioned ~24px from the top. It uses a semi-transparent frosted glass background with a strong backdrop-blur. The bar contains the Mobbin wordmark on the left, nav links in the center, and auth buttons on the right.</p>
+
+    <div class="glass-preview">
+      <div class="glass-box">
+        <span class="logo-mock">mobbin</span>
+        <span>Browse</span>
+        <span>Collections</span>
+        <span>Pricing</span>
+        <span style="background:#1A1A1A;color:white;padding:6px 14px;border-radius:20px;font-size:13px;">Log in</span>
+      </div>
+    </div>
+
+    <dl class="specs">
+      <dt>Shape</dt><dd>Pill-shaped, border-radius: 9999px (fully rounded), height: 60px, width: ~584px</dd>
+      <dt>Background</dt><dd>Semi-transparent glass: <code>rgba(255,255,255,0.72)</code> with <code>backdrop-blur: 24px</code></dd>
+      <dt>Border</dt><dd>Subtle light border for depth, likely <code>rgba(255,255,255,0.85)</code></dd>
+      <dt>Shadow</dt><dd>Soft shadow: <code>0 4px 24px rgba(0,0,0,0.06)</code></dd>
+      <dt>Position</dt><dd><code>position: fixed; top: 24px; left: 50%; transform: translateX(-50%)</code></dd>
+      <dt>Padding</dt><dd><code>px-24 py-8</code> (24px horizontal, 8px vertical)</dd>
+      <dt>Z-Index</dt><dd><code>z-index: 10</code></dd>
+    </dl>
+
+    <pre><code><span class="sel">.navbar</span> {
+  <span class="prop">position</span>: <span class="val">fixed</span>;
+  <span class="prop">top</span>: <span class="val">24px</span>;
+  <span class="prop">left</span>: <span class="val">50%</span>;
+  <span class="prop">transform</span>: <span class="val">translateX(-50%)</span>;
+  <span class="prop">height</span>: <span class="val">60px</span>;
+  <span class="prop">width</span>: <span class="val">584px</span>;
+  <span class="prop">border-radius</span>: <span class="val">9999px</span>;
+  <span class="prop">background</span>: <span class="val">rgba(255,255,255,0.72)</span>;
+  <span class="prop">backdrop-filter</span>: <span class="val">blur(24px)</span>;
+  <span class="prop">-webkit-backdrop-filter</span>: <span class="val">blur(24px)</span>;
+  <span class="prop">display</span>: <span class="val">flex</span>;
+  <span class="prop">align-items</span>: <span class="val">center</span>;
+  <span class="prop">gap</span>: <span class="val">24px</span>;
+  <span class="prop">padding</span>: <span class="val">8px 24px</span>;
+  <span class="prop">z-index</span>: <span class="val">10</span>;
+}</code></pre>
+
+    <div class="resources">
+      <h4>Recreation Resources</h4>
+      <a href="https://ui.aceternity.com/components/floating-navbar" class="resource-link" target="_blank">
+        <div class="r-icon">🧊</div>
+        <div class="r-info">
+          <span class="r-title">Aceternity UI — Floating Navbar</span>
+          <span class="r-desc">React component for a floating glassmorphic navigation bar with scroll-based visibility.</span>
+          <span class="r-url">ui.aceternity.com/components/floating-navbar</span>
+        </div>
+      </a>
+      <a href="https://css.glass" class="resource-link" target="_blank">
+        <div class="r-icon">🪟</div>
+        <div class="r-info">
+          <span class="r-title">CSS.Glass — Glassmorphism Generator</span>
+          <span class="r-desc">Interactive tool to generate glassmorphism CSS with customizable blur, transparency, and border values.</span>
+          <span class="r-url">css.glass</span>
+        </div>
+      </a>
+    </div>
+  </div>
+</section>
+
+<!-- ═══════════════════════════════════════ -->
+<!-- ELEMENT 2: STACKED APP LOGO CAROUSEL   -->
+<!-- ═══════════════════════════════════════ -->
+<section id="e2">
+  <div class="element-card">
+    <h3>Stacked App Logo Carousel <span class="badge badge-key">Animation</span></h3>
+    <p>A distinctive animated element above the hero headline. App icons (Loom, Airbnb, Wise, Shop, Cosmos, Dropbox, Retro, Uber) cycle through a "card stack" animation where the front card scales up and fades, revealing the next. Cards sit on top of each other with decreasing scale and Y-offset, creating a 3D depth perspective.</p>
+
+    <div class="app-logo-stack">
+      <div class="logo-card" style="background: linear-gradient(135deg, #FF385C, #FF6B81)"></div>
+      <div class="logo-card" style="background: linear-gradient(135deg, #00C4CC, #7BDFF2)"></div>
+      <div class="logo-card" style="background: linear-gradient(135deg, #5B4CDB, #8B5CF6)"></div>
+    </div>
+
+    <dl class="specs">
+      <dt>Container</dt><dd>Centered above headline, houses multiple <code>&lt;li&gt;</code> elements with <code>position: absolute</code></dd>
+      <dt>Card Size</dt><dd>Rounded square, <code>rounded-24</code> (24px border-radius), square aspect ratio</dd>
+      <dt>Stack Depth</dt><dd>Front card: <code>scale(1) translateY(0)</code>, 2nd: <code>scale(0.82) translateY(-8px)</code>, 3rd: <code>scale(0.64) translateY(-16px)</code></dd>
+      <dt>Animation</dt><dd>Timed interval (~3s): front card scales up + fades, stack shifts forward</dd>
+      <dt>Background</dt><dd>Behind each card stack: muted gray <code>hsl(var(--neutral-30))</code> and <code>hsl(var(--neutral-5))</code></dd>
+      <dt>Images</dt><dd>Real app logos loaded at <code>492×492</code> or <code>460×460</code> with blur-up placeholder SVGs</dd>
+    </dl>
+
+    <pre><code><span class="cm">/* Stack positioning for each card layer */</span>
+<span class="sel">.card-front</span>  { <span class="prop">z-index</span>: <span class="val">3</span>; <span class="prop">transform</span>: <span class="val">scale(1) translateY(0)</span>; }
+<span class="sel">.card-middle</span> { <span class="prop">z-index</span>: <span class="val">2</span>; <span class="prop">transform</span>: <span class="val">scale(0.82) translateY(-8px)</span>; }
+<span class="sel">.card-back</span>   { <span class="prop">z-index</span>: <span class="val">1</span>; <span class="prop">transform</span>: <span class="val">scale(0.64) translateY(-16px)</span>; }
+
+<span class="cm">/* Transform origin */</span>
+<span class="sel">.card-middle, .card-back</span> {
+  <span class="prop">transform-origin</span>: <span class="val">top center</span>;
+}</code></pre>
+
+    <div class="tip">
+      <strong>Recreation Tip</strong>
+      <p>This uses Framer Motion's <code>AnimatePresence</code> pattern in React. Each card has absolute positioning inside a relative container. A timer cycles the z-index and applies entry/exit transitions. The blur-up placeholder SVGs create a nice progressive loading effect.</p>
+    </div>
+  </div>
+</section>
+
+<!-- ═══════════════════════════════════════ -->
+<!-- ELEMENT 3: HERO HEADLINE               -->
+<!-- ═══════════════════════════════════════ -->
+<section id="e3">
+  <div class="element-card">
+    <h3>Hero Headline Typography <span class="badge badge-critical">Hero Visual</span></h3>
+    <p>The main hero headline reads: <strong>"Discover real-world design inspiration."</strong> It's centered, large, and uses a custom sans-serif font with tight letter-spacing. Below it, a subheading states the library size: "Featuring over 1,000 iOS & Web apps, and 200 sites — New content weekly."</p>
+
+    <dl class="specs">
+      <dt>Headline Font</dt><dd>Custom variable font (class <code>__variable_cd5095</code>), likely a geometric sans-serif similar to Inter or custom Mobbin typeface</dd>
+      <dt>Headline Size</dt><dd>Responsive: <code>text-title-1</code> → <code>text-spotlight</code> → <code>text-showcase</code> across breakpoints. Largest ~48-56px</dd>
+      <dt>Max Width</dt><dd><code>max-w-[300px]</code> at mobile → <code>max-w-[500px]</code> at 720px → <code>max-w-[700px]</code> at 1280px</dd>
+      <dt>Subheading</dt><dd><code>text-feature</code> size, <code>text-text-secondary</code> color (muted gray), max-width 640px at desktop</dd>
+      <dt>Alignment</dt><dd>Centered text, wrapped in a <code>grid place-items-center</code> container</dd>
+      <dt>Spacing</dt><dd><code>pt-32</code> between logo stack and heading. <code>pt-16</code> → <code>pt-24</code> between heading and subheading</dd>
+      <dt>Animation</dt><dd>Fade-in + slide-up on load: <code>opacity: 0; transform: translateY(20px)</code> → animated to visible</dd>
+    </dl>
+
+    <div class="resources">
+      <h4>Font Resources</h4>
+      <a href="https://rsms.me/inter/" class="resource-link" target="_blank">
+        <div class="r-icon">🔤</div>
+        <div class="r-info">
+          <span class="r-title">Inter — Variable Font</span>
+          <span class="r-desc">Closest publicly available match to Mobbin's heading typeface. Geometric sans-serif with excellent readability at all sizes.</span>
+          <span class="r-url">rsms.me/inter</span>
+        </div>
+      </a>
+      <a href="https://fonts.google.com/specimen/Plus+Jakarta+Sans" class="resource-link" target="_blank">
+        <div class="r-icon">🅰️</div>
+        <div class="r-info">
+          <span class="r-title">Plus Jakarta Sans — Google Fonts</span>
+          <span class="r-desc">Alternative geometric sans-serif with similar proportions. Available for free on Google Fonts with variable weight support.</span>
+          <span class="r-url">fonts.google.com/specimen/Plus+Jakarta+Sans</span>
+        </div>
+      </a>
+    </div>
+  </div>
+</section>
+
+<!-- ═══════════════════════════════════════ -->
+<!-- ELEMENT 4: DUAL CTA BUTTONS            -->
+<!-- ═══════════════════════════════════════ -->
+<section id="e4">
+  <div class="element-card">
+    <h3>Dual CTA Button Pair <span class="badge badge-key">Interactive</span></h3>
+    <p>Two buttons side by side: a solid black "Join for free" primary button and a bordered "See our plans" secondary button with an inline arrow icon. Both use fully rounded (pill) shapes. The primary button features a "shine" animation — a diagonal highlight that sweeps across on load.</p>
+
+    <div class="btn-preview">
+      <button class="btn-primary">Join for free</button>
+      <button class="btn-secondary">See our plans <span style="font-size:16px;">→</span></button>
+    </div>
+
+    <dl class="specs">
+      <dt>Primary</dt><dd>"Join for free" — <code>bg-background-inverse</code> (black), white text, <code>rounded-full</code>, <code>h-44</code>, <code>px-16</code>, bold</dd>
+      <dt>Shine Effect</dt><dd>CSS animation: a skewed <code>-45deg</code> white highlight band translates from <code>-left-[120%]</code> across the button</dd>
+      <dt>Secondary</dt><dd>"See our plans" — transparent background, <code>shadow-inset-1</code> border, <code>rounded-full</code>, with arrow icon in a small circular <code>bg-background-tertiary</code> badge</dd>
+      <dt>Arrow Icon</dt><dd>SVG arrow right, <code>20×20</code>, inside a <code>rounded-full p-4</code> container with gray background</dd>
+      <dt>Gap</dt><dd><code>gap-x-12</code> (12px) between the two buttons</dd>
+      <dt>Hover</dt><dd>Primary: <code>bg-background-inverse-hover</code>. Secondary: <code>bg-background-primary-hover</code> + darker border</dd>
+      <dt>Focus</dt><dd>Both: <code>focus-visible:ring-4 ring-[hsl(var(--blue-60)/50%)]</code></dd>
+    </dl>
+
+    <pre><code><span class="sel">.btn-primary</span> {
+  <span class="prop">background</span>: <span class="str">#1A1A1A</span>;
+  <span class="prop">color</span>: <span class="val">white</span>;
+  <span class="prop">border-radius</span>: <span class="val">9999px</span>;
+  <span class="prop">height</span>: <span class="val">44px</span>;
+  <span class="prop">padding</span>: <span class="val">0 16px</span>;
+  <span class="prop">font-weight</span>: <span class="val">700</span>;
+  <span class="prop">position</span>: <span class="val">relative</span>;
+  <span class="prop">overflow</span>: <span class="val">hidden</span>;
+}
+
+<span class="cm">/* Shine animation overlay */</span>
+<span class="sel">.btn-primary::after</span> {
+  <span class="prop">content</span>: <span class="str">''</span>;
+  <span class="prop">position</span>: <span class="val">absolute</span>;
+  <span class="prop">inset-block</span>: <span class="val">0</span>;
+  <span class="prop">left</span>: <span class="val">-120%</span>;
+  <span class="prop">width</span>: <span class="val">50%</span>;
+  <span class="prop">transform</span>: <span class="val">skewX(-45deg)</span>;
+  <span class="prop">background</span>: <span class="val">rgba(255,255,255,0.15)</span>;
+  <span class="prop">mix-blend-mode</span>: <span class="val">hard-light</span>;
+  <span class="prop">animation</span>: <span class="val">shine 2s ease-out forwards</span>;
+}</code></pre>
+  </div>
+</section>
+
+<!-- ═══════════════════════════════════════ -->
+<!-- ELEMENT 5: TRUST BAR                   -->
+<!-- ═══════════════════════════════════════ -->
+<section id="e5">
+  <div class="element-card">
+    <h3>Trust Bar — Company Logos <span class="badge badge-detail">Social Proof</span></h3>
+    <p>A "Trusted by design teams at" label followed by a horizontal row of muted company logos: Uber, Headspace, Spotify, Netflix, PayPal, and Amazon. Logos use <code>currentColor</code> fill and are styled in a muted tertiary gray tone to avoid competing with the hero.</p>
+
+    <dl class="specs">
+      <dt>Label</dt><dd>"Trusted by design teams at" — <code>text-compact</code> size, <code>text-text-secondary</code> color</dd>
+      <dt>Logo Format</dt><dd>Inline SVGs using <code>fill="currentColor"</code> — colored via parent's text color class</dd>
+      <dt>Logo Color</dt><dd><code>text-text-tertiary</code> — light gray, roughly <code>#AAAAAA</code></dd>
+      <dt>Logo Height</dt><dd>14px on mobile → 20–22px on desktop (<code>min-720:h-20</code>, <code>min-720:h-[22px]</code>)</dd>
+      <dt>Spacing</dt><dd><code>gap-x-24</code> mobile → <code>gap-x-48</code> desktop between logos</dd>
+      <dt>Position</dt><dd><code>pt-40</code> below CTAs on mobile → <code>pt-64</code> tablet → <code>pt-80</code> desktop</dd>
+      <dt>Visibility</dt><dd>Some logos hidden on mobile, shown at <code>min-720</code> or <code>min-1280</code> breakpoints</dd>
+    </dl>
+
+    <div class="tip">
+      <strong>Recreation Tip</strong>
+      <p>Using inline SVGs with <code>fill="currentColor"</code> is the cleanest pattern for a trust bar. It lets you control logo color purely through CSS. Keep logos at uniform height and desaturated. SimpleIcons.org provides brandmark SVGs for most companies.</p>
+    </div>
+
+    <div class="resources">
+      <h4>Logo Resources</h4>
+      <a href="https://simpleicons.org/" class="resource-link" target="_blank">
+        <div class="r-icon">◼️</div>
+        <div class="r-info">
+          <span class="r-title">Simple Icons — Brand SVGs (free)</span>
+          <span class="r-desc">2900+ brand SVG icons with optimized paths. Use with fill="currentColor" for easy color control in trust bars.</span>
+          <span class="r-url">simpleicons.org</span>
+        </div>
+      </a>
+      <a href="https://worldvectorlogo.com/" class="resource-link" target="_blank">
+        <div class="r-icon">🏷️</div>
+        <div class="r-info">
+          <span class="r-title">World Vector Logo — Brand Logos (free)</span>
+          <span class="r-desc">High-quality brand logos in SVG format. Useful for trust bars, partner sections, and integration showcases.</span>
+          <span class="r-url">worldvectorlogo.com</span>
+        </div>
+      </a>
+    </div>
+  </div>
+</section>
+
+<!-- ═══════════════════════════════════════ -->
+<!-- ELEMENT 6: iOS SCREEN CARD GALLERY     -->
+<!-- ═══════════════════════════════════════ -->
+<section id="e6">
+  <div class="element-card">
+    <h3>iOS Screen Card Gallery <span class="badge badge-accent">Showcase</span></h3>
+    <p>Two product showcase sections display grids of real iOS and Web app screenshots. Each screenshot is housed in a rounded card with a subtle inset shadow overlay to create a "device screen" feel. Screen labels (like "Login", "Profile", "Checkout") appear as captions above each image. The galleries feature horizontal scrolling on mobile.</p>
+
+    <dl class="specs">
+      <dt>Card Shape</dt><dd><code>rounded-24</code> (24px border-radius), with aspect ratio <code>aspect-[0.462]</code> (iPhone-like 9:19.5)</dd>
+      <dt>Inset Shadow</dt><dd><code>after:</code> pseudo-element with <code>shadow-image-inset</code> — inner shadow for depth</dd>
+      <dt>Image Sizing</dt><dd><code>object-cover object-top</code>, width controlled by CSS custom property <code>--screen-width</code></dd>
+      <dt>Captions</dt><dd><code>text-body-bold</code>, <code>text-text-primary</code>, centered above each card</dd>
+      <dt>Layout</dt><dd>Horizontal flex with <code>flex-shrink-0</code> — scrollable row of screen cards</dd>
+      <dt>Gap</dt><dd><code>gap-y-16</code> mobile → <code>gap-y-20</code> desktop between caption and image</dd>
+      <dt>Image Quality</dt><dd>Loaded at <code>1125×2556</code> or <code>1180×2676</code>, served via <code>_next/image</code> with quality=75</dd>
+      <dt>Loading</dt><dd>Blur-up placeholder SVG with Gaussian blur filter, progressive enhancement</dd>
+    </dl>
+
+    <pre><code><span class="sel">.screen-card</span> {
+  <span class="prop">position</span>: <span class="val">relative</span>;
+  <span class="prop">overflow</span>: <span class="val">hidden</span>;
+  <span class="prop">border-radius</span>: <span class="val">24px</span>;
+}
+
+<span class="cm">/* Inset shadow overlay for device-like feel */</span>
+<span class="sel">.screen-card::after</span> {
+  <span class="prop">content</span>: <span class="str">''</span>;
+  <span class="prop">position</span>: <span class="val">absolute</span>;
+  <span class="prop">inset</span>: <span class="val">0</span>;
+  <span class="prop">border-radius</span>: <span class="val">24px</span>;
+  <span class="prop">box-shadow</span>: <span class="val">inset 0 0 0 1px rgba(0,0,0,0.08)</span>;
+  <span class="prop">pointer-events</span>: <span class="val">none</span>;
+}</code></pre>
+
+    <div class="resources">
+      <h4>Recreation Resources</h4>
+      <a href="https://shots.so/" class="resource-link" target="_blank">
+        <div class="r-icon">📱</div>
+        <div class="r-info">
+          <span class="r-title">Shots.so — Device Mockup Generator</span>
+          <span class="r-desc">Create beautiful device mockups for screenshots. Supports iPhone, iPad, MacBook with rounded corners and shadows.</span>
+          <span class="r-url">shots.so</span>
+        </div>
+      </a>
+      <a href="https://nextjs.org/docs/app/api-reference/components/image" class="resource-link" target="_blank">
+        <div class="r-icon">▲</div>
+        <div class="r-info">
+          <span class="r-title">Next.js Image Component — Blur Placeholder</span>
+          <span class="r-desc">Documentation for implementing the progressive blur-up image loading technique Mobbin uses via blurDataURL.</span>
+          <span class="r-url">nextjs.org/docs/app/api-reference/components/image</span>
+        </div>
+      </a>
+    </div>
+  </div>
+</section>
+
+<!-- ═══════════════════════════════════════ -->
+<!-- ELEMENT 7: PRODUCT SCREENSHOTS         -->
+<!-- ═══════════════════════════════════════ -->
+<section id="e7">
+  <div class="element-card">
+    <h3>Product Screenshot Sections <span class="badge badge-key">Feature Showcase</span></h3>
+    <p>Large product screenshots showing the Mobbin interface itself — both the iOS browsing view and web browsing view. These are full-width images loaded at very high resolution (up to 3840px wide), displayed in rounded containers. Two tabs ("iOS & Android" and "Web") let users switch between platform views.</p>
+
+    <dl class="specs">
+      <dt>Image Size</dt><dd>Loaded at <code>w=3840</code> via Next.js Image optimization for retina screens</dd>
+      <dt>Container</dt><dd>Full-width within max-content area, large rounded corners</dd>
+      <dt>Tabs</dt><dd>Pill-style tabs above screenshots — active state has solid background, inactive is text-only</dd>
+      <dt>Tab Style</dt><dd><code>rounded-full</code>, <code>h-44</code>, with icon + label, uses <code>shadow-inset-1</code> for inactive border</dd>
+      <dt>Responsive</dt><dd>Images use <code>srcset</code> with <code>1x</code> and <code>2x</code> density descriptors</dd>
+    </dl>
+
+    <div class="tip">
+      <strong>Recreation Tip</strong>
+      <p>Use <code>&lt;picture&gt;</code> or Next.js <code>&lt;Image&gt;</code> with <code>srcSet</code> for density-aware loading. The tab switcher is implemented with conditional rendering — the inactive screenshot is simply not rendered, not just hidden. This reduces DOM weight.</p>
+    </div>
+  </div>
+</section>
+
+<!-- ═══════════════════════════════════════ -->
+<!-- ELEMENT 8: VIDEO + STORYBOARD FLOWS    -->
+<!-- ═══════════════════════════════════════ -->
+<section id="e8">
+  <div class="element-card">
+    <h3>Video & Storyboard Flows Section <span class="badge badge-accent">Feature</span></h3>
+    <p>A section titled "Explore entire user journeys with flows" showcasing two content types side by side: (1) an auto-playing looped video showing a mobile flow with transitions, and (2) a storyboard-style static image showing sequential screens. Both sit inside rounded gray containers.</p>
+
+    <dl class="specs">
+      <dt>Section Title</dt><dd>"Explore entire user journeys with flows." — responsive sizing: <code>text-title-2</code> → <code>text-spotlight</code></dd>
+      <dt>Video</dt><dd><code>&lt;video autoplay muted loop playsinline disablepictureinpicture&gt;</code>, served as MP4 via Bytescale CDN</dd>
+      <dt>Video Container</dt><dd><code>bg-background-secondary</code> (light gray), <code>rounded-16</code>, responsive aspect ratio: <code>aspect-[0.8]</code> → <code>aspect-[1.22]</code></dd>
+      <dt>Video Position</dt><dd>Centered via CSS calc: <code>left: calc((100% - var(--video-width))/2)</code>, custom property <code>--video-width</code>: 65% → 37%</dd>
+      <dt>Video Shadow</dt><dd><code>shadow-[0px_8px_40px_0px_rgba(0,0,0,0.04)]</code> — very subtle elevation</dd>
+      <dt>Caption</dt><dd>"Videos" / "Storyboards" labels with description text below: <code>text-feature-bold</code> + <code>text-body text-text-secondary</code></dd>
+      <dt>Layout</dt><dd>Single column mobile → <code>grid-cols-2</code> at 720px with <code>gap-x-32</code> → <code>gap-x-40</code> at 1280px</dd>
+    </dl>
+
+    <div class="resources">
+      <h4>Recreation Resources</h4>
+      <a href="https://bytescale.com/" class="resource-link" target="_blank">
+        <div class="r-icon">☁️</div>
+        <div class="r-info">
+          <span class="r-title">Bytescale — Media CDN</span>
+          <span class="r-desc">The CDN Mobbin uses for video hosting and delivery. Handles video transcoding, optimization, and edge delivery.</span>
+          <span class="r-url">bytescale.com</span>
+        </div>
+      </a>
+      <a href="https://mux.com/" class="resource-link" target="_blank">
+        <div class="r-icon">▶️</div>
+        <div class="r-info">
+          <span class="r-title">Mux — Video API (alternative)</span>
+          <span class="r-desc">Video infrastructure API commonly used with Next.js. Handles adaptive streaming, thumbnail generation, and analytics.</span>
+          <span class="r-url">mux.com</span>
+        </div>
+      </a>
+    </div>
+  </div>
+</section>
+
+<!-- ═══════════════════════════════════════ -->
+<!-- ELEMENT 9: TESTIMONIAL CARDS           -->
+<!-- ═══════════════════════════════════════ -->
+<section id="e9">
+  <div class="element-card">
+    <h3>Testimonial Cards (Masonry Layout) <span class="badge badge-detail">Social Proof</span></h3>
+    <p>A multi-column masonry grid of testimonial cards from design professionals at companies like Figma, Endless, and others. Each card includes an avatar (with an optional company logo badge), name, company, and quote. Cards have uniform styling but variable height based on quote length.</p>
+
+    <dl class="specs">
+      <dt>Layout</dt><dd>CSS multi-column masonry via <code>break-inside-avoid</code> — responsive column count: 1 → 2 → 3 columns</dd>
+      <dt>Card Style</dt><dd><code>rounded-24</code>, <code>p-24</code>, <code>bg-background-primary</code> (white), <code>border border-border-secondary</code></dd>
+      <dt>Avatar</dt><dd><code>size-44</code> (44px), <code>rounded-full</code>, loaded at <code>400×400</code></dd>
+      <dt>Company Badge</dt><dd>Small <code>size-16</code> logo image in a <code>rounded-full</code> container, positioned <code>-bottom-[2px] -right-[2px]</code> on the avatar</dd>
+      <dt>Name</dt><dd><code>text-body-bold</code></dd>
+      <dt>Company</dt><dd><code>text-compact text-text-secondary</code></dd>
+      <dt>Quote</dt><dd><code>&lt;blockquote&gt;</code> element, <code>text-body</code> style</dd>
+      <dt>Gap</dt><dd><code>gap-y-16</code> between avatar section and quote, column gap via CSS custom property <code>--gap</code></dd>
+    </dl>
+
+    <pre><code><span class="sel">.testimonial-grid</span> {
+  <span class="prop">columns</span>: <span class="val">3</span>;
+  <span class="prop">column-gap</span>: <span class="val">16px</span>;
+}
+
+<span class="sel">.testimonial-card</span> {
+  <span class="prop">break-inside</span>: <span class="val">avoid</span>;
+  <span class="prop">margin-bottom</span>: <span class="val">16px</span>;
+  <span class="prop">border-radius</span>: <span class="val">24px</span>;
+  <span class="prop">padding</span>: <span class="val">24px</span>;
+  <span class="prop">border</span>: <span class="val">1px solid var(--border)</span>;
+}
+
+<span class="cm">/* Company badge overlaying avatar */</span>
+<span class="sel">.avatar-badge</span> {
+  <span class="prop">position</span>: <span class="val">absolute</span>;
+  <span class="prop">bottom</span>: <span class="val">-2px</span>;
+  <span class="prop">right</span>: <span class="val">-2px</span>;
+  <span class="prop">width</span>: <span class="val">16px</span>;
+  <span class="prop">height</span>: <span class="val">16px</span>;
+  <span class="prop">border-radius</span>: <span class="val">50%</span>;
+  <span class="prop">border</span>: <span class="val">2px solid white</span>;
+}</code></pre>
+  </div>
+</section>
+
+<!-- ═══════════════════════════════════════ -->
+<!-- ELEMENT 10: COLOR PALETTE              -->
+<!-- ═══════════════════════════════════════ -->
+<section id="e10">
+  <div class="element-card">
+    <h3>Color Palette & Theming <span class="badge badge-critical">Foundation</span></h3>
+    <p>Mobbin uses HSL-based CSS custom properties for its entire color system, with light/dark mode support. The palette is minimal and neutral-first, relying on near-black and grays with a single blue accent for interactive states.</p>
+
+    <h3 style="margin-top:24px;">Backgrounds</h3>
+    <div class="color-row"><div class="swatch" style="background:#FFFFFF"></div><div class="color-info"><div class="hex">#FFFFFF</div><div class="usage">Primary background — cards, page canvas</div></div></div>
+    <div class="color-row"><div class="swatch" style="background:#F5F5F5"></div><div class="color-info"><div class="hex">#F5F5F5</div><div class="usage">Secondary background — content containers, video backgrounds</div></div></div>
+    <div class="color-row"><div class="swatch" style="background:#EBEBEB"></div><div class="color-info"><div class="hex">#EBEBEB</div><div class="usage">Tertiary background — badges, small UI elements</div></div></div>
+
+    <h3>Text Colors</h3>
+    <div class="color-row"><div class="swatch" style="background:#1A1A1A"></div><div class="color-info"><div class="hex">#1A1A1A</div><div class="usage">Primary text — headings, body text, nav links</div></div></div>
+    <div class="color-row"><div class="swatch" style="background:#6B6B6B"></div><div class="color-info"><div class="hex">#6B6B6B</div><div class="usage">Secondary text — descriptions, subheadings, muted content</div></div></div>
+    <div class="color-row"><div class="swatch" style="background:#AAAAAA"></div><div class="color-info"><div class="hex">#AAAAAA</div><div class="usage">Tertiary text — trust logos, timestamps, fine print</div></div></div>
+
+    <h3>Borders</h3>
+    <div class="color-row"><div class="swatch" style="background:#E5E5E5"></div><div class="color-info"><div class="hex">#E5E5E5</div><div class="usage">Primary border — card edges, dividers</div></div></div>
+    <div class="color-row"><div class="swatch" style="background:#D4D4D4"></div><div class="color-info"><div class="hex">#D4D4D4</div><div class="usage">Secondary border — secondary button outlines, hover states</div></div></div>
+
+    <h3>Interactive</h3>
+    <div class="color-row"><div class="swatch" style="background:#1A1A1A"></div><div class="color-info"><div class="hex">#1A1A1A</div><div class="usage">Primary CTA — "Join for free" button background (inverse)</div></div></div>
+    <div class="color-row"><div class="swatch" style="background:#2563EB"></div><div class="color-info"><div class="hex">#2563EB</div><div class="usage">Focus ring — <code>hsl(var(--blue-60)/50%)</code> ring on interactive elements</div></div></div>
+
+    <div class="tip">
+      <strong>Theme Implementation</strong>
+      <p>Mobbin uses an HSL-based token system: colors are stored as raw HSL values in CSS variables (e.g., <code>--neutral-30</code>), then composed with <code>hsl(var(--neutral-30))</code> or <code>hsl(var(--neutral-30)/50%)</code> for opacity. The theme is toggled via a class on <code>&lt;html&gt;</code> with a localStorage-backed script in <code>&lt;head&gt;</code> to prevent FOUC.</p>
+    </div>
+  </div>
+</section>
+
+<!-- ═══════════════════════════════════════ -->
+<!-- ELEMENT 11: TYPOGRAPHY SYSTEM          -->
+<!-- ═══════════════════════════════════════ -->
+<section id="e11">
+  <div class="element-card">
+    <h3>Typography System <span class="badge badge-structure">Foundation</span></h3>
+    <p>Mobbin uses a custom variable font loaded via Next.js font optimization (class <code>__variable_cd5095</code>). The typography system defines semantic size tokens that map to different sizes across breakpoints.</p>
+
+    <dl class="specs">
+      <dt>Font Family</dt><dd>Custom variable font — geometric sans-serif, similar to Inter or SF Pro</dd>
+      <dt>Font Loading</dt><dd>Next.js <code>@next/font</code> with font-display: swap and variable font optimization</dd>
+      <dt>text-showcase</dt><dd>Largest heading — used at <code>min-1280</code>, estimated ~56px</dd>
+      <dt>text-spotlight</dt><dd>Hero heading at tablet — estimated ~42px</dd>
+      <dt>text-title-1</dt><dd>Section headings — estimated ~32px</dd>
+      <dt>text-title-2</dt><dd>Subsection headings — estimated ~24px</dd>
+      <dt>text-feature</dt><dd>Feature descriptions / hero subtext — estimated ~18px</dd>
+      <dt>text-feature-bold</dt><dd>Feature labels (bold variant) — estimated ~18px, font-weight: 700</dd>
+      <dt>text-body</dt><dd>Body text — estimated ~16px, regular weight</dd>
+      <dt>text-body-bold</dt><dd>Bold body text — ~16px, font-weight: 700 (used for names, labels)</dd>
+      <dt>text-compact</dt><dd>Small text — estimated ~14px (company names in testimonials, trust bar label)</dd>
+    </dl>
+  </div>
+</section>
+
+<!-- ═══════════════════════════════════════ -->
+<!-- ELEMENT 12: LAYOUT & SPACING           -->
+<!-- ═══════════════════════════════════════ -->
+<section id="e12">
+  <div class="element-card">
+    <h3>Layout & Spacing System <span class="badge badge-structure">Foundation</span></h3>
+    <p>Mobbin uses a responsive layout with three primary breakpoints and a max-content width. The design uses Tailwind CSS custom breakpoints (<code>min-720</code>, <code>min-1024</code>, <code>min-1280</code>) instead of the defaults.</p>
+
+    <dl class="specs">
+      <dt>Max Width</dt><dd><code>--max-content-width: 1280px</code></dd>
+      <dt>Breakpoints</dt><dd><code>min-720</code> (tablet), <code>min-1024</code> (small desktop), <code>min-1280</code> (desktop)</dd>
+      <dt>Page Padding</dt><dd><code>px-20</code> mobile → <code>px-24</code> tablet → <code>px-[116px]</code> desktop</dd>
+      <dt>Section Spacing</dt><dd><code>pb-64 pt-40</code> mobile → <code>py-80</code> tablet → <code>py-[120px]</code> desktop</dd>
+      <dt>Inner Gaps</dt><dd><code>gap-y-40</code> mobile → <code>gap-y-64</code> tablet → <code>gap-y-80</code> desktop</dd>
+      <dt>Grid</dt><dd>CSS Grid with <code>place-items-center</code>, grid-cols responsive from 1 → 2 columns</dd>
+      <dt>Spacing Scale</dt><dd>4px base unit: 4, 8, 12, 16, 20, 24, 32, 40, 48, 64, 80, 120 (Tailwind-compatible)</dd>
+    </dl>
+
+    <pre><code><span class="cm">/* Core layout variables */</span>
+<span class="sel">:root</span> {
+  <span class="prop">--max-content-width</span>: <span class="val">1280px</span>;
+}
+
+<span class="cm">/* Responsive section pattern */</span>
+<span class="sel">.section</span> {
+  <span class="prop">display</span>: <span class="val">grid</span>;
+  <span class="prop">place-items</span>: <span class="val">center</span>;
+  <span class="prop">width</span>: <span class="val">100vw</span>;
+  <span class="prop">padding</span>: <span class="val">40px 20px 64px</span>;
+  <span class="prop">gap</span>: <span class="val">40px</span>;
+}
+
+<span class="cm">/* Tablet (720px+) */</span>
+<span class="sel">@media (min-width: 720px)</span> {
+  <span class="sel">.section</span> { <span class="prop">padding</span>: <span class="val">80px 24px</span>; <span class="prop">gap</span>: <span class="val">64px</span>; }
+}
+
+<span class="cm">/* Desktop (1280px+) */</span>
+<span class="sel">@media (min-width: 1280px)</span> {
+  <span class="sel">.section</span> { <span class="prop">padding</span>: <span class="val">120px 116px</span>; <span class="prop">gap</span>: <span class="val">80px</span>; }
+}</code></pre>
+
+    <div class="tip">
+      <strong>Tech Stack</strong>
+      <p>Mobbin is built with Next.js (App Router), React, Tailwind CSS with custom configuration (custom breakpoints, extended spacing), and uses Sentry for monitoring. Images are optimized through Next.js Image component with Bytescale CDN. The theme system uses a <code>&lt;script&gt;</code> in <code>&lt;head&gt;</code> to apply saved theme before paint.</p>
+    </div>
+  </div>
+</section>
+
+<!-- ═══════════════════════════════════════ -->
+<!-- ELEMENT 13: BOTTOM CTA (JoinSection)   -->
+<!-- ═══════════════════════════════════════ -->
+<section id="e13">
+  <div class="element-card">
+    <h3>Bottom CTA — "JoinSection" <span class="badge badge-critical">Conversion</span></h3>
+    <p>A prominent final call-to-action section near the bottom of the page. Centered layout with a large headline reading <strong>"Never run out of inspiration again."</strong>, a supporting paragraph, and a duplicated pair of CTA buttons identical to the hero buttons. This section has generous vertical padding that increases dramatically at desktop, creating ample breathing room before the marquee below.</p>
+
+    <dl class="specs">
+      <dt>Component</dt><dd><code>JoinSection.tsx</code> — a dedicated React component</dd>
+      <dt>Headline</dt><dd>"Never run out of inspiration again." — <code>text-title-2</code> → <code>text-title-1</code> at 720px → <code>text-spotlight</code> at 1280px</dd>
+      <dt>Headline Width</dt><dd><code>max-w-[280px]</code> mobile → <code>max-w-[340px]</code> tablet → <code>max-w-[430px]</code> desktop, with <code>text-balance</code></dd>
+      <dt>Subheading</dt><dd>"Use Mobbin for free as long as you like or get full access with any of our paid plans." — <code>text-body text-text-secondary</code>, max-width 340→420px</dd>
+      <dt>CTA Buttons</dt><dd>Same pair as hero: "Join for free" (solid black pill) + "See our plans" (bordered pill with arrow icon). <code>gap-x-12</code> between them</dd>
+      <dt>Button Specs</dt><dd>Both: <code>rounded-full h-44 text-body-bold px-16</code>. Primary: <code>bg-background-inverse</code>. Secondary: <code>shadow-inset-1 shadow-border-tertiary</code></dd>
+      <dt>Arrow Icon</dt><dd>Custom SVG arrow-right, 20×20 viewBox, <code>stroke="currentColor" stroke-width="2"</code>, inside a <code>rounded-full bg-background-tertiary p-4</code> container, offset <code>-me-[6px]</code></dd>
+      <dt>Layout</dt><dd><code>grid place-items-center</code> — all content centered</dd>
+      <dt>Spacing (Top)</dt><dd><code>pt-40</code> mobile → <code>pt-80</code> tablet → <code>pt-[120px]</code> desktop</dd>
+      <dt>Spacing (Bottom)</dt><dd><code>pb-[120px]</code> mobile/tablet → <code>pb-[210px]</code> desktop — very generous trailing whitespace</dd>
+      <dt>Gap CTA→Marquee</dt><dd><code>pt-40</code> mobile → <code>pt-64</code> tablet → <code>pt-80</code> desktop between CTA buttons and the marquee ticker</dd>
+    </dl>
+
+    <pre><code><span class="sel">.join-section</span> {
+  <span class="prop">display</span>: <span class="val">grid</span>;
+  <span class="prop">place-items</span>: <span class="val">center</span>;
+  <span class="prop">padding-top</span>: <span class="val">40px</span>;
+  <span class="prop">padding-bottom</span>: <span class="val">120px</span>;
+  <span class="prop">background</span>: <span class="val">var(--bg-primary)</span>;
+}
+
+<span class="sel">@media (min-width: 1280px)</span> {
+  <span class="sel">.join-section</span> {
+    <span class="prop">padding-top</span>: <span class="val">120px</span>;
+    <span class="prop">padding-bottom</span>: <span class="val">210px</span>;  <span class="cm">/* Very generous bottom padding */</span>
+  }
+}
+
+<span class="cm">/* Headline uses text-balance for cleaner wrapping */</span>
+<span class="sel">.join-section h2</span> {
+  <span class="prop">text-wrap</span>: <span class="val">balance</span>;
+  <span class="prop">text-align</span>: <span class="val">center</span>;
+  <span class="prop">max-width</span>: <span class="val">430px</span>;
+}
+
+<span class="cm">/* Arrow icon container inside secondary button */</span>
+<span class="sel">.arrow-badge</span> {
+  <span class="prop">margin-inline-end</span>: <span class="val">-6px</span>;
+  <span class="prop">border-radius</span>: <span class="val">9999px</span>;
+  <span class="prop">background</span>: <span class="val">var(--bg-tertiary)</span>;
+  <span class="prop">padding</span>: <span class="val">4px</span>;
+}</code></pre>
+
+    <div class="tip">
+      <strong>Recreation Tip</strong>
+      <p>The CTA buttons are identical React components reused from the hero — they share the same <code>LinkButton</code> Sentry-tagged component. The <code>text-balance</code> CSS property ensures the headline wraps evenly. The generous <code>pb-[210px]</code> bottom padding on desktop gives the section a spacious, premium feel before the marquee flows underneath.</p>
+    </div>
+  </div>
+</section>
+
+<!-- ═══════════════════════════════════════ -->
+<!-- ELEMENT 14: SCROLLING APP MARQUEE      -->
+<!-- ═══════════════════════════════════════ -->
+<section id="e14">
+  <div class="element-card">
+    <h3>Scrolling App Marquee — "AppsMarquee" <span class="badge badge-key">Animation</span></h3>
+    <p>An infinitely scrolling horizontal marquee of app icons paired with their names. Two rows scroll in opposite directions, creating a dynamic "ticker tape" effect. Each item consists of a rounded app icon with an inset shadow overlay followed by the app name in a large bold font. The marquee sits below the bottom CTA and is full-width, edge-to-edge, overflowing the container.</p>
+
+    <dl class="specs">
+      <dt>Component</dt><dd><code>AppsMarquee.tsx</code> wrapping a <code>Ticker.tsx</code> component — each row is an independent Ticker instance</dd>
+      <dt>Rows</dt><dd>2 rows stacked vertically with <code>gap-y-16</code> mobile → <code>gap-y-24</code> desktop</dd>
+      <dt>Row 1 Direction</dt><dd><code>animation-direction: normal</code> (scrolls left)</dd>
+      <dt>Row 2 Direction</dt><dd><code>animation-direction: reverse</code> (scrolls right)</dd>
+      <dt>Animation</dt><dd>CSS <code>@keyframes</code> ticker: <code>translateX(0)</code> → <code>translateX(-100%)</code>, duration: <code>80s</code>, linear, infinite</dd>
+      <dt>Duplication</dt><dd>The item list is duplicated inside the ticker (<code>flex shrink-0</code>) to create a seamless loop — as one set exits left, the clone takes over</dd>
+      <dt>Container</dt><dd><code>overflow: hidden</code> on parent, <code>flex w-full</code></dd>
+    </dl>
+
+    <h3 style="margin-top:24px;">App Item Structure</h3>
+    <dl class="specs">
+      <dt>Item Layout</dt><dd><code>flex items-center gap-x-16</code> — icon and name horizontally aligned</dd>
+      <dt>Icon Size</dt><dd><code>size-40 rounded-12</code> on mobile → <code>size-64 rounded-16</code> on desktop (40px→64px square)</dd>
+      <dt>Icon Shadow</dt><dd><code>after:</code> pseudo-element with <code>shadow-logo-inset</code> — subtle inset border for a "pressed into surface" feel</dd>
+      <dt>Icon Image</dt><dd>Loaded at <code>480×480</code> or <code>460×460</code>, lazy-loaded with blur-up SVG placeholder</dd>
+      <dt>Name Font</dt><dd><code>text-title-3</code> mobile → <code>text-title-2</code> desktop (~20-24px), <code>text-nowrap</code> to prevent wrapping</dd>
+      <dt>Item Gap</dt><dd><code>gap-x-24 pr-24</code> mobile → <code>gap-x-40 pr-40</code> desktop between items (the <code>pr</code> adds trailing space at end of the set)</dd>
+    </dl>
+
+    <h3 style="margin-top:24px;">Featured Apps</h3>
+    <p style="color:var(--ink-sec); font-size:14px; margin-top:6px;">Row 1: Coinbase, Wise, Headspace, Airbnb, Uber, Nike, Pinterest, Figma, Notion, Loom, Cash App, Spotify, Duolingo, and more. Row 2 features a different set scrolling in reverse direction.</p>
+
+    <pre><code><span class="cm">/* Core ticker animation — duplicated content for seamless loop */</span>
+<span class="sel">@keyframes ticker</span> {
+  <span class="sel">0%</span>   { <span class="prop">transform</span>: <span class="val">translateX(0)</span>; }
+  <span class="sel">100%</span> { <span class="prop">transform</span>: <span class="val">translateX(-100%)</span>; }
+}
+
+<span class="sel">.ticker-track</span> {
+  <span class="prop">display</span>: <span class="val">flex</span>;
+  <span class="prop">flex-shrink</span>: <span class="val">0</span>;
+  <span class="prop">animation</span>: <span class="val">ticker 80s linear infinite</span>;
+}
+
+<span class="cm">/* Reverse direction for Row 2 */</span>
+<span class="sel">.ticker-track--reverse</span> {
+  <span class="prop">animation-direction</span>: <span class="val">reverse</span>;
+}
+
+<span class="cm">/* App logo with inset shadow overlay */</span>
+<span class="sel">.app-logo</span> {
+  <span class="prop">position</span>: <span class="val">relative</span>;
+  <span class="prop">width</span>: <span class="val">64px</span>;
+  <span class="prop">height</span>: <span class="val">64px</span>;
+  <span class="prop">border-radius</span>: <span class="val">16px</span>;
+  <span class="prop">overflow</span>: <span class="val">hidden</span>;
+  <span class="prop">flex-shrink</span>: <span class="val">0</span>;
+}
+
+<span class="sel">.app-logo::after</span> {
+  <span class="prop">content</span>: <span class="str">''</span>;
+  <span class="prop">position</span>: <span class="val">absolute</span>;
+  <span class="prop">inset</span>: <span class="val">0</span>;
+  <span class="prop">border-radius</span>: <span class="val">inherit</span>;
+  <span class="prop">box-shadow</span>: <span class="val">inset 0 0 0 1px rgba(0,0,0,0.06)</span>;
+  <span class="prop">pointer-events</span>: <span class="val">none</span>;
+}
+
+<span class="cm">/* Marquee item: icon + name */</span>
+<span class="sel">.marquee-item</span> {
+  <span class="prop">display</span>: <span class="val">flex</span>;
+  <span class="prop">align-items</span>: <span class="val">center</span>;
+  <span class="prop">gap</span>: <span class="val">16px</span>;
+}
+
+<span class="sel">.marquee-item p</span> {
+  <span class="prop">white-space</span>: <span class="val">nowrap</span>;
+  <span class="prop">font-size</span>: <span class="val">24px</span>;
+  <span class="prop">font-weight</span>: <span class="val">600</span>;
+}</code></pre>
+
+    <div class="tip">
+      <strong>Recreation Tip</strong>
+      <p>The seamless loop trick: render the full list of items inside a <code>flex shrink-0</code> container, then duplicate the entire container as a sibling. Both animate together via <code>translateX(-100%)</code>. The <code>overflow: hidden</code> on the parent masks the duplication. The <code>pr-24/pr-40</code> (padding-right) on the inner item group ensures proper spacing where the sets meet during the loop transition. Use <code>will-change: transform</code> for GPU-accelerated scrolling.</p>
+    </div>
+
+    <div class="resources">
+      <h4>Recreation Resources</h4>
+      <a href="https://www.react-fast-marquee.com/" class="resource-link" target="_blank">
+        <div class="r-icon">🎢</div>
+        <div class="r-info">
+          <span class="r-title">react-fast-marquee — Marquee Component</span>
+          <span class="r-desc">Lightweight React marquee component with direction, speed, gradient, and pause-on-hover support. Drop-in replacement for custom ticker implementations.</span>
+          <span class="r-url">react-fast-marquee.com</span>
+        </div>
+      </a>
+      <a href="https://css-tricks.com/infinite-css-only-marquee/" class="resource-link" target="_blank">
+        <div class="r-icon">🔄</div>
+        <div class="r-info">
+          <span class="r-title">CSS-Tricks — Infinite CSS-Only Marquee</span>
+          <span class="r-desc">Tutorial on building a pure CSS infinite scrolling marquee using keyframe animations and content duplication — the exact technique Mobbin uses.</span>
+          <span class="r-url">css-tricks.com/infinite-css-only-marquee</span>
+        </div>
+      </a>
+      <a href="https://simpleicons.org/" class="resource-link" target="_blank">
+        <div class="r-icon">◼️</div>
+        <div class="r-info">
+          <span class="r-title">Simple Icons — App Brand Logos</span>
+          <span class="r-desc">Free SVG icons for 2900+ brands. Useful if you want to recreate the marquee with logo icons instead of full app icons.</span>
+          <span class="r-url">simpleicons.org</span>
+        </div>
+      </a>
+    </div>
+  </div>
+</section>
+
+<footer>
+  <p>Resource guide generated from structural analysis of <a href="https://mobbin.com" target="_blank">mobbin.com</a> HTML source.<br>All specs extracted from class names, inline styles, and computed values. All external links lead to their original sources.</p>
+</footer>
+
+</div>
+</body>
+</html>

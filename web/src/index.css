@@ -1,0 +1,97 @@
+@import "tailwindcss";
+@plugin "tailwindcss-animate";
+
+@custom-variant dark (&:is(.dark *));
+
+@theme {
+  --font-sans: 'Outfit', ui-sans-serif, system-ui, sans-serif;
+  --font-mono: 'IBM Plex Mono', ui-monospace, SFMono-Regular, monospace;
+
+  /* Custom colors mapped from Mobbin */
+  --color-background: var(--background);
+  --color-foreground: var(--foreground);
+  --color-card: var(--card);
+  --color-card-foreground: var(--card-foreground);
+  --color-popover: var(--popover);
+  --color-popover-foreground: var(--popover-foreground);
+  --color-primary: var(--primary);
+  --color-primary-foreground: var(--primary-foreground);
+  --color-secondary: var(--secondary);
+  --color-secondary-foreground: var(--secondary-foreground);
+  --color-muted: var(--muted);
+  --color-muted-foreground: var(--muted-foreground);
+  --color-accent: var(--accent);
+  --color-accent-foreground: var(--accent-foreground);
+  --color-destructive: var(--destructive);
+  --color-destructive-foreground: var(--destructive-foreground);
+  --color-border: var(--border);
+  --color-input: var(--input);
+  --color-ring: var(--ring);
+
+  /* Profit / Loss strict colors */
+  --color-profit: #10B981;
+  --color-loss: #EF4444;
+
+  /* Mobbin specific accents */
+  --color-brand-teal: #0D9488;
+  --color-brand-teal-light: #14B8A6;
+  --color-brand-amber: #D97706;
+}
+
+@layer base {
+  :root {
+    /* Light Mode (Mobbin Base) */
+    --background: #FAFAFA;
+    --foreground: #1A1A1A;
+    --card: #FFFFFF;
+    --card-foreground: #1A1A1A;
+    --popover: #FFFFFF;
+    --popover-foreground: #1A1A1A;
+    --primary: #1A1A1A;
+    --primary-foreground: #FFFFFF;
+    --secondary: #F3F3F3;
+    --secondary-foreground: #1A1A1A;
+    --muted: #E5E5E5;
+    --muted-foreground: #8A8A8A;
+    --accent: #F3F3F3;
+    --accent-foreground: #1A1A1A;
+    --destructive: #E11D48;
+    --destructive-foreground: #FAFAFA;
+    --border: #E5E5E5;
+    --input: #E5E5E5;
+    --ring: #1A1A1A;
+    --radius: 0.75rem;
+  }
+
+  /* Dark mode mappings mimicking the structure but inverted */
+  .dark {
+    --background: #0A0A0A;
+    --foreground: #FAFAFA;
+    --card: #121212;
+    --card-foreground: #FAFAFA;
+    --popover: #121212;
+    --popover-foreground: #FAFAFA;
+    --primary: #FAFAFA;
+    --primary-foreground: #1A1A1A;
+    --secondary: #222222;
+    --secondary-foreground: #FAFAFA;
+    --muted: #1A1A1A;
+    --muted-foreground: #8A8A8A;
+    --accent: #222222;
+    --accent-foreground: #FAFAFA;
+    --destructive: #EF4444;
+    --destructive-foreground: #FAFAFA;
+    --border: #2A2A2A;
+    --input: #2A2A2A;
+    --ring: #FAFAFA;
+  }
+}
+
+@layer base {
+  * {
+    @apply border-border;
+  }
+  body {
+    @apply bg-background text-foreground font-sans antialiased;
+  }
+}

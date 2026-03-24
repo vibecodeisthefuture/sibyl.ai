@@ -60,6 +60,15 @@ class SignalRouter(BaseAgent):
     After routing, signals wait in the database for the Position Lifecycle
     Manager (Sprint 3) to pick them up and execute trades.
 
+    Category-Aware Routing (Sprint 9):
+        The router now loads per-category strategies from
+        config/category_strategies.yaml via CategoryStrategyManager.
+        When routing a signal, it:
+        1. Looks up the market's category from the DB
+        2. Applies category-specific confidence/EV modifiers
+        3. Uses the category's preferred engine as a tiebreaker
+        4. Stores adjusted confidence in signals.confidence_adjusted
+
     Usage:
         router = SignalRouter(db=db, config=system_config)
         router.schedule()  # Runs in background
@@ -88,14 +97,22 @@ class SignalRouter(BaseAgent):
         self._ace_min_confidence: float = 0.68
         self._ace_min_ev: float = 0.06
 
+        # Category strategy manager — loaded in start()
+        self._category_mgr = None
+
+        # Policy engine — loaded in start() (Sprint 11)
+        self._policy = None
+
     @property
     def poll_interval(self) -> float:
         """Run every 3 seconds — fastest agent in the pipeline for minimal routing latency."""
         return 3.0
 
     async def start(self) -> None:
-        """Load SGE and ACE engine configurations for routing decisions."""
+        """Load SGE/ACE engine configs, category strategies, and policy engine."""
         from sibyl.core.config import load_yaml
+        from sibyl.agents.intelligence.category_strategy import CategoryStrategyManager
+        from sibyl.core.policy import PolicyEngine
 
         try:
             self._sge_config = load_yaml("sge_config.yaml")
@@ -119,21 +136,47 @@ class SignalRouter(BaseAgent):
         self._ace_min_confidence = float(ace_risk.get("min_confidence", 0.68))
         self._ace_min_ev = float(ace_risk.get("min_ev_threshold", 0.06))
 
+        # ── Initialize Category Strategy Manager ────────────────────────
+        self._category_mgr = CategoryStrategyManager()
+        await self._category_mgr.initialize()
+
+        # ── Initialize Policy Engine (Sprint 11) ────────────────────────
+        self._policy = PolicyEngine()
+        try:
+            self._policy.initialize()
+            self.logger.info("PolicyEngine loaded for signal routing")
+        except FileNotFoundError:
+            self.logger.warning(
+                "investment_policy_config.yaml not found — policy enforcement disabled"
+            )
+            self._policy = None
+
         self.logger.info(
-            "Signal Router started (SGE whitelist=%s, ACE whitelist=%s)",
+            "Signal Router started (SGE whitelist=%s, ACE whitelist=%s, categories=%d, policy=%s)",
             self._sge_whitelist, self._ace_whitelist,
+            len(self._category_mgr.categories),
+            "ACTIVE" if self._policy else "DISABLED",
         )
 
     async def run_cycle(self) -> None:
-        """Fetch PENDING signals and route each to the appropriate engine."""
+        """Fetch PENDING signals and route each to the appropriate engine.
 
-        # Fetch all unrouted signals
+        Category-aware routing (Sprint 9):
+        1. Look up the market's category from the DB.
+        2. Apply category-specific confidence/EV modifiers via CategoryStrategyManager.
+        3. Use adjusted values for threshold checks.
+        4. Use category's preferred engine as tiebreaker.
+        5. Store adjusted confidence in signals.confidence_adjusted.
+        """
+
+        # Fetch all unrouted signals WITH market category
         pending = await self.db.fetchall(
-            """SELECT id, market_id, signal_type, confidence, ev_estimate,
-                      detection_modes_triggered
-               FROM signals
-               WHERE status = 'PENDING'
-               ORDER BY confidence DESC"""
+            """SELECT s.id, s.market_id, s.signal_type, s.confidence, s.ev_estimate,
+                      s.detection_modes_triggered, m.category
+               FROM signals s
+               JOIN markets m ON s.market_id = m.id
+               WHERE s.status = 'PENDING'
+               ORDER BY s.confidence DESC"""
         )
 
         if not pending:
@@ -145,19 +188,125 @@ class SignalRouter(BaseAgent):
         for signal in pending:
             signal_id = signal["id"]
             signal_type = signal["signal_type"]
-            confidence = float(signal["confidence"])
-            ev = float(signal["ev_estimate"] or 0)
+            raw_confidence = float(signal["confidence"])
+            raw_ev = float(signal["ev_estimate"] or 0)
+            category = signal["category"]
+
+            # ── Policy: Classify tier + sports sub-type (Sprint 11) ────
+            policy_tier = None
+            sports_sub_type = None
+            override_flag = 0
+            if self._policy and self._policy.initialized:
+                tier = self._policy.classify_tier(category or "")
+                policy_tier = tier.value if tier else None
+
+                # Sports pre-game/in-game detection
+                if category and category.lower() in ("sports", "sports (pre-game)", "sports (in-game)"):
+                    # For now, default to PRE_GAME unless market data says otherwise
+                    sports_sub_type = "PRE_GAME"
+
+                # Policy: Check signal quality floor
+                quality_ok = self._policy.check_signal_quality_floor(
+                    category=category or "",
+                    confidence=raw_confidence,
+                    ev=raw_ev,
+                    sports_sub_type=sports_sub_type,
+                )
+                if not quality_ok:
+                    # Check if override eligible (Tier 3 or exceptional signal)
+                    tier_cfg = self._policy.get_tier_config(tier) if tier else None
+                    if tier_cfg and not tier_cfg.auto_entry:
+                        # Tier 3: check override protocol
+                        override = self._policy.check_override_eligibility(
+                            confidence=raw_confidence, ev=raw_ev,
+                            independent_source_count=0,
+                        )
+                        if not override.eligible:
+                            await self.db.execute(
+                                """UPDATE signals
+                                   SET status = 'DEFERRED', policy_tier = ?,
+                                       sports_sub_type = ?
+                                   WHERE id = ?""",
+                                (policy_tier, sports_sub_type, signal_id),
+                            )
+                            deferred_count += 1
+                            self.logger.debug(
+                                "Signal #%d deferred by policy floor (%s, tier=%s)",
+                                signal_id, category, policy_tier,
+                            )
+                            continue
+
+                # Policy: Check no_signal_coverage
+                if category and not self._policy.has_signal_coverage(category):
+                    await self.db.execute(
+                        """UPDATE signals
+                           SET status = 'DEFERRED', policy_tier = ?
+                           WHERE id = ?""",
+                        (policy_tier, signal_id),
+                    )
+                    deferred_count += 1
+                    self.logger.info(
+                        "Signal #%d flagged no_signal_coverage (%s)", signal_id, category,
+                    )
+                    continue
+
+                # Policy: Block Tier 3 auto-entry unless override eligible
+                tier_cfg = self._policy.get_tier_config(tier)
+                if tier_cfg and not tier_cfg.auto_entry:
+                    override = self._policy.check_override_eligibility(
+                        confidence=raw_confidence, ev=raw_ev,
+                        independent_source_count=0,  # Will be enriched by source data
+                    )
+                    if not override.eligible:
+                        await self.db.execute(
+                            """UPDATE signals
+                               SET status = 'DEFERRED', policy_tier = ?
+                               WHERE id = ?""",
+                            (policy_tier, signal_id),
+                        )
+                        deferred_count += 1
+                        self.logger.info(
+                            "Signal #%d blocked — Tier 3 restricted, override not eligible (%s)",
+                            signal_id, override.reasoning,
+                        )
+                        continue
+                    else:
+                        override_flag = 1
+                        self.logger.info(
+                            "Signal #%d POLICY OVERRIDE — Tier 3 entry approved (%s)",
+                            signal_id, override.reasoning,
+                        )
+
+            # ── Apply category-specific adjustments ───────────────────
+            if self._category_mgr and self._category_mgr.initialized:
+                adjusted = self._category_mgr.adjust_signal(
+                    category=category,
+                    signal_type=signal_type,
+                    raw_confidence=raw_confidence,
+                    raw_ev=raw_ev,
+                )
+                confidence = adjusted.confidence
+                ev = adjusted.ev
+                cat_engine_pref = adjusted.preferred_engine
+            else:
+                confidence = raw_confidence
+                ev = raw_ev
+                cat_engine_pref = None
 
             # ── Determine routing destination ─────────────────────────
-            destination = self._route_signal(signal_type, confidence, ev)
+            destination = self._route_signal(
+                signal_type, confidence, ev, cat_engine_pref
+            )
 
             # ── Update the signal in the database ─────────────────────
             new_status = "DEFERRED" if destination == "DEFERRED" else "ROUTED"
             await self.db.execute(
                 """UPDATE signals
-                   SET routed_to = ?, status = ?
+                   SET routed_to = ?, status = ?, confidence_adjusted = ?,
+                       policy_tier = ?, sports_sub_type = ?, override_flag = ?
                    WHERE id = ?""",
-                (destination, new_status, signal_id),
+                (destination, new_status, round(confidence, 4),
+                 policy_tier, sports_sub_type, override_flag, signal_id),
             )
 
             if destination == "DEFERRED":
@@ -165,8 +314,11 @@ class SignalRouter(BaseAgent):
             else:
                 routed_count += 1
                 self.logger.info(
-                    "Signal #%d (%s, conf=%.2f, ev=%.3f) → %s",
-                    signal_id, signal_type, confidence, ev, destination,
+                    "Signal #%d (%s [%s], tier=%s, conf=%.2f→%.2f, ev=%.3f) → %s%s",
+                    signal_id, signal_type, category or "?",
+                    policy_tier or "?",
+                    raw_confidence, confidence, ev, destination,
+                    " [OVERRIDE]" if override_flag else "",
                 )
 
         await self.db.commit()
@@ -182,7 +334,13 @@ class SignalRouter(BaseAgent):
 
     # ── Routing Logic ─────────────────────────────────────────────────
 
-    def _route_signal(self, signal_type: str, confidence: float, ev: float) -> str:
+    def _route_signal(
+        self,
+        signal_type: str,
+        confidence: float,
+        ev: float,
+        category_engine_pref: str | None = None,
+    ) -> str:
         """Determine routing destination for a signal.
 
         Decision logic (in priority order):
@@ -193,12 +351,15 @@ class SignalRouter(BaseAgent):
         4. If it meets BOTH engines' thresholds and is on both whitelists → BOTH.
         5. COMPOSITE_HIGH_CONVICTION meeting both thresholds → always BOTH.
         6. If it meets one engine's thresholds but isn't on its whitelist,
-           try the other engine.
+           use the category's preferred engine as a tiebreaker (Sprint 9).
+        7. Final fallback: route to whichever engine has the lower threshold.
 
         Args:
-            signal_type: The classified signal type string.
-            confidence:  Confidence score (0.0–1.0).
-            ev:          Expected value estimate.
+            signal_type:          The classified signal type string.
+            confidence:           Confidence score (0.0–1.0), already category-adjusted.
+            ev:                   Expected value estimate, already category-adjusted.
+            category_engine_pref: Category's preferred engine ("SGE" or "ACE"),
+                                  used as a tiebreaker. None = no preference.
 
         Returns:
             "SGE", "ACE", "BOTH", or "DEFERRED".
@@ -231,8 +392,12 @@ class SignalRouter(BaseAgent):
         if on_ace_list and meets_ace:
             return "ACE"
 
-        # Meets thresholds but not on either whitelist — route to
-        # whichever engine has the lower threshold (more permissive)
+        # Meets thresholds but not on either whitelist:
+        # Use category preference as tiebreaker (Sprint 9 enhancement)
+        if category_engine_pref and meets_sge and meets_ace:
+            return category_engine_pref
+
+        # Final fallback: route to whichever threshold is met
         if meets_sge:
             return "SGE"
         if meets_ace:

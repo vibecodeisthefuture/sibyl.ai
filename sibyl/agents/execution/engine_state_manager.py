@@ -35,12 +35,17 @@ logger = logging.getLogger("sibyl.agents.engine_state_manager")
 
 
 class EngineStateManager(BaseAgent):
-    """Keeps engine_state table current with capital and risk metrics."""
+    """Keeps engine_state table current with capital and risk metrics.
+
+    Sprint 14: Also tracks SGE_BLITZ sub-engine as part of the Blitz partition.
+    """
 
     def __init__(self, db: DatabaseManager, config: dict[str, Any]) -> None:
         super().__init__(name="engine_state_manager", db=db, config=config)
         self._sge_allocation: float = 0.70
         self._ace_allocation: float = 0.30
+        self._blitz_enabled: bool = False
+        self._blitz_pct_of_sge: float = 0.20  # 20% of SGE pool
 
     @property
     def poll_interval(self) -> float:
@@ -63,8 +68,19 @@ class EngineStateManager(BaseAgent):
         except FileNotFoundError:
             pass
 
-        # Ensure engine_state rows exist for both engines
-        for engine in ("SGE", "ACE"):
+        # Load Blitz config
+        try:
+            blitz = sge.get("blitz", {})
+            self._blitz_enabled = blitz.get("enabled", False)
+            self._blitz_pct_of_sge = float(blitz.get("capital_pct_of_sge", 0.20))
+        except Exception:
+            self._blitz_enabled = False
+
+        # Ensure engine_state rows exist for all engines (including SGE_BLITZ)
+        engines = ["SGE", "ACE"]
+        if self._blitz_enabled:
+            engines.append("SGE_BLITZ")
+        for engine in engines:
             existing = await self.db.fetchone(
                 "SELECT engine FROM engine_state WHERE engine = ?", (engine,)
             )
@@ -75,13 +91,17 @@ class EngineStateManager(BaseAgent):
                 )
         await self.db.commit()
         self.logger.info(
-            "Engine State Manager started (SGE=%.0f%%, ACE=%.0f%%)",
+            "Engine State Manager started (SGE=%.0f%%, ACE=%.0f%%, Blitz=%s)",
             self._sge_allocation * 100, self._ace_allocation * 100,
+            f"{self._blitz_pct_of_sge * 100:.0f}% of SGE" if self._blitz_enabled else "disabled",
         )
 
     async def run_cycle(self) -> None:
-        """Recompute capital metrics for both engines from live position data."""
-        for engine in ("SGE", "ACE"):
+        """Recompute capital metrics for all engines from live position data."""
+        engines = ["SGE", "ACE"]
+        if self._blitz_enabled:
+            engines.append("SGE_BLITZ")
+        for engine in engines:
             await self._update_engine(engine)
         await self.db.commit()
 

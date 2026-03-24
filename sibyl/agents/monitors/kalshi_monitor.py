@@ -22,17 +22,28 @@ AUTHENTICATION MODES:
       the agent runs in AUTHENTICATED mode (can read portfolio, positions).
     - Otherwise, it runs in PUBLIC-ONLY mode (market data only).
 
+MARKET DISCOVERY (Sprint 17 — Gap-Fill Integration):
+    On the FIRST market refresh cycle, runs the full gap-fill discovery
+    system that scans ALL open events (not just the first 100) to discover
+    up to 27,000+ markets.  This is critical for Sports (14K markets),
+    Financial (1K markets), and Weather (300+ markets) pipelines.
+
+    Subsequent refreshes use standard pagination (fast, ~7s) to pick up
+    newly listed markets without the full gap-fill overhead.
+
+    A periodic FULL refresh with gap-fill runs every 30 minutes to catch
+    any markets that were listed after the initial discovery.
+
 WHAT THIS AGENT WRITES TO THE DATABASE:
     - markets table:    Market metadata with Kalshi-specific event_id grouping
-    - prices table:     YES/NO prices + volume + open interest (every 30s)
-    - orderbook table:  Normalized order book snapshots (every 30s)
-    - trades_log table: Recent trades with taker side (every 60s)
-
-POLLING CADENCES: Same as PolymarketMonitorAgent (see that file for details).
+    - prices table:     YES/NO prices + volume + open interest (every 5s)
+    - orderbook table:  Normalized order book snapshots (every 5s)
+    - trades_log table: Recent trades with taker side (every 10s)
 """
 
 from __future__ import annotations
 
+import asyncio
 import json
 import logging
 import os
@@ -41,6 +52,7 @@ from typing import Any
 from sibyl.clients.kalshi_client import KalshiClient
 from sibyl.core.base_agent import BaseAgent
 from sibyl.core.database import DatabaseManager
+from sibyl.core.market_discovery import classify_category, discover_markets, seed_markets
 
 logger = logging.getLogger("sibyl.agents.kalshi_monitor")
 
@@ -54,10 +66,16 @@ class KalshiMonitorAgent(BaseAgent):
 
       At a 5-second poll interval:
         - Market/event list refresh: every 24th cycle ≈ 2 minutes
+        - Full gap-fill discovery: first cycle + every 360th cycle ≈ 30 minutes
         - Price snapshots: EVERY cycle (5s)
         - Orderbook snapshots: EVERY cycle (5s)
         - Recent trades: every 2nd cycle (10s)
     """
+
+    # Maximum number of markets to poll for live prices per cycle.
+    # With 5s cycles and ~10 req/s Kalshi limit, we can poll ~40 markets per cycle.
+    # The rest get prices seeded during discovery and updated less frequently.
+    MAX_LIVE_POLL_MARKETS = 40
 
     def __init__(self, db: DatabaseManager, config: dict[str, Any]) -> None:
         super().__init__(name="kalshi_monitor", db=db, config=config)
@@ -65,6 +83,9 @@ class KalshiMonitorAgent(BaseAgent):
         self._polling = config.get("polling", {})
         self._client: KalshiClient | None = None
         self._tracked_markets: dict[str, dict] = {}  # ticker → market metadata
+        self._live_poll_markets: list[str] = []  # Priority subset for live polling
+        self._gap_fill_done = False  # True after first full gap-fill discovery
+        self._gap_fill_task: asyncio.Task | None = None  # Background gap-fill task
 
     @property
     def poll_interval(self) -> float:
@@ -105,30 +126,105 @@ class KalshiMonitorAgent(BaseAgent):
 
         # ── Market list refresh (every 24 cycles ≈ 2 min at 5s polling) ─
         if self._cycle_count % 24 == 0:
-            await self._refresh_markets()
+            # First refresh or every 360 cycles (~30 min): full gap-fill discovery
+            # This runs as a background task so it doesn't block price polling.
+            if not self._gap_fill_done or self._cycle_count % 360 == 0:
+                if self._gap_fill_task is None or self._gap_fill_task.done():
+                    use_gap_fill = not self._gap_fill_done
+                    self._gap_fill_task = asyncio.create_task(
+                        self._refresh_markets_with_discovery(gap_fill=use_gap_fill)
+                    )
+            else:
+                # Standard refresh: just paginate for new/updated markets
+                await self._refresh_markets_standard()
 
         if not self._tracked_markets:
             return
 
-        # ── Price snapshots (EVERY cycle — 5s) ────────────────────────
+        # ── Refresh live poll priority list (every 12 cycles ≈ 1 min) ──
+        if self._cycle_count % 12 == 0 or not self._live_poll_markets:
+            await self._refresh_live_poll_list()
+
+        # ── Price snapshots (EVERY cycle — 5s) for priority markets ───
         await self._snapshot_prices()
 
-        # ── Orderbook snapshots (EVERY cycle — 5s) ────────────────────
+        # ── Orderbook snapshots (EVERY cycle — 5s) for priority markets
         await self._snapshot_orderbooks()
 
-        # ── Trade feed (every 2nd cycle ≈ 10s) ────────────────────────
+        # ── Trade feed (every 2nd cycle ≈ 10s) for priority markets ───
         if self._cycle_count % 2 == 0:
             await self._fetch_trades()
 
     async def stop(self) -> None:
+        if self._gap_fill_task and not self._gap_fill_task.done():
+            self._gap_fill_task.cancel()
+            try:
+                await self._gap_fill_task
+            except asyncio.CancelledError:
+                pass
         if self._client:
             await self._client.close()
         self.logger.info("Kalshi monitor stopped")
 
-    # ── Internal methods ──────────────────────────────────────────────
+    # ── Market Discovery Methods ───────────────────────────────────────
 
-    async def _refresh_markets(self) -> None:
-        """Fetch active events + nested markets from Kalshi API."""
+    async def _refresh_markets_with_discovery(self, gap_fill: bool = True) -> None:
+        """Full market discovery using the shared gap-fill system.
+
+        This uses the market_discovery module which scans ALL open events,
+        classifies them into Sibyl's 8 pipeline categories, and seeds
+        them into the markets table with correct category assignments.
+
+        Args:
+            gap_fill: If True, run the full gap-fill scan (~600s on first run).
+                      If False, use standard pagination only (~7s).
+        """
+        try:
+            self.logger.info(
+                "Starting market discovery (gap_fill=%s)...", gap_fill
+            )
+            events, markets = await discover_markets(
+                self._client, max_pages=15, gap_fill=gap_fill,
+            )
+
+            # Seed all discovered markets to DB with proper categories
+            written = await seed_markets(self.db, markets)
+
+            # Update tracked markets dict for price/orderbook polling
+            for m in markets:
+                ticker = m.get("ticker", "")
+                if ticker:
+                    self._tracked_markets[ticker] = {
+                        "title": m.get("title", ""),
+                        "event_ticker": m.get("_event_ticker", ""),
+                    }
+
+            self.logger.info(
+                "Market discovery complete: %d events, %d markets discovered, "
+                "%d written to DB, %d total tracked",
+                len(events), len(markets), written, len(self._tracked_markets),
+            )
+
+            if gap_fill:
+                self._gap_fill_done = True
+
+                # Write discovery stats to system_state for dashboard
+                await self.db.execute(
+                    """INSERT OR REPLACE INTO system_state (key, value, updated_at)
+                       VALUES ('market_discovery_total', ?, datetime('now'))""",
+                    (str(len(self._tracked_markets)),),
+                )
+                await self.db.commit()
+
+        except Exception:
+            self.logger.exception("Market discovery failed")
+
+    async def _refresh_markets_standard(self) -> None:
+        """Standard market refresh using simple pagination (fast, no gap-fill).
+
+        This is the quick refresh that runs every 2 minutes to pick up
+        newly listed markets without the overhead of full gap-fill.
+        """
         try:
             result = await self._client.get_events(  # type: ignore[union-attr]
                 limit=100, status="open", with_nested_markets=True,
@@ -143,7 +239,7 @@ class KalshiMonitorAgent(BaseAgent):
         for event in events:
             event_ticker = event.get("event_ticker", "")
             event_title = event.get("title", "")
-            category = self._categorize_event(event)
+            event_category = event.get("category", "")
             markets = event.get("markets", [])
 
             for m in markets:
@@ -155,7 +251,12 @@ class KalshiMonitorAgent(BaseAgent):
                 close_date = m.get("close_time") or m.get("expiration_time")
                 status = "active" if m.get("status", "").lower() in ("open", "active") else "closed"
 
-                # Extract current price from market data
+                # Use the improved classifier from market_discovery module
+                sibyl_category = classify_category(
+                    event_category, title
+                )
+
+                # Extract current price
                 yes_price = None
                 if "yes_ask" in m and m["yes_ask"] is not None:
                     yes_price = float(m["yes_ask"]) / 100.0
@@ -174,7 +275,7 @@ class KalshiMonitorAgent(BaseAgent):
                          event_id = excluded.event_id,
                          updated_at = datetime('now')
                     """,
-                    (ticker, title, category, close_date, status, event_ticker),
+                    (ticker, title, sibyl_category, close_date, status, event_ticker),
                 )
 
                 self._tracked_markets[ticker] = {
@@ -183,7 +284,6 @@ class KalshiMonitorAgent(BaseAgent):
                     "yes_price": yes_price,
                 }
 
-                # If we got a price inline, record it
                 if yes_price is not None:
                     await self.db.execute(
                         "INSERT INTO prices (market_id, yes_price, no_price) VALUES (?, ?, ?)",
@@ -195,14 +295,76 @@ class KalshiMonitorAgent(BaseAgent):
         await self.db.commit()
         self.logger.info("Refreshed %d Kalshi markets from %d events", upserted, len(events))
 
-        # Pagination — fetch more if cursor is present
-        cursor = result.get("cursor")
-        if cursor and upserted >= 100:
-            self.logger.info("More events available (cursor=%s) — will fetch next cycle", cursor)
+    # ── Live Poll Priority Selection ──────────────────────────────────
+
+    async def _refresh_live_poll_list(self) -> None:
+        """Select the highest-priority markets for live price/orderbook polling.
+
+        Priority criteria (in order):
+        1. Markets with OPEN positions (we need real-time prices for P&L)
+        2. Markets with ROUTED signals (about to be executed)
+        3. Markets with recent PENDING signals (being evaluated)
+        4. Markets closing soonest (time-sensitive opportunities)
+
+        Caps at MAX_LIVE_POLL_MARKETS to stay within Kalshi rate limits.
+        """
+        priority_tickers: list[str] = []
+
+        # Priority 1: Markets with open positions (critical — need live P&L)
+        position_rows = await self.db.fetchall(
+            "SELECT DISTINCT market_id FROM positions WHERE status = 'OPEN'"
+        )
+        for row in position_rows:
+            if row["market_id"] not in priority_tickers:
+                priority_tickers.append(row["market_id"])
+
+        # Priority 2: Markets with ROUTED signals (about to execute)
+        signal_rows = await self.db.fetchall(
+            """SELECT DISTINCT market_id FROM signals
+               WHERE status IN ('ROUTED', 'PENDING')
+               ORDER BY timestamp DESC LIMIT 50"""
+        )
+        for row in signal_rows:
+            if row["market_id"] not in priority_tickers:
+                priority_tickers.append(row["market_id"])
+
+        # Priority 3: Fill remaining slots with markets closing soonest
+        if len(priority_tickers) < self.MAX_LIVE_POLL_MARKETS:
+            remaining = self.MAX_LIVE_POLL_MARKETS - len(priority_tickers)
+            if priority_tickers:
+                exclude_placeholders = ",".join("?" for _ in priority_tickers)
+                close_rows = await self.db.fetchall(
+                    f"""SELECT id FROM markets
+                        WHERE platform = 'kalshi' AND status = 'active'
+                          AND close_date IS NOT NULL AND close_date > datetime('now')
+                          AND id NOT IN ({exclude_placeholders})
+                        ORDER BY close_date ASC
+                        LIMIT ?""",
+                    (*priority_tickers, remaining),
+                )
+            else:
+                close_rows = await self.db.fetchall(
+                    """SELECT id FROM markets
+                       WHERE platform = 'kalshi' AND status = 'active'
+                         AND close_date IS NOT NULL AND close_date > datetime('now')
+                       ORDER BY close_date ASC
+                       LIMIT ?""",
+                    (remaining,),
+                )
+            for row in close_rows:
+                priority_tickers.append(row["id"])
+
+        self._live_poll_markets = priority_tickers[:self.MAX_LIVE_POLL_MARKETS]
+        self.logger.debug(
+            "Live poll list: %d markets (positions: %d, signals: %d)",
+            len(self._live_poll_markets), len(position_rows), len(signal_rows),
+        )
+
+    # ── Price/Orderbook/Trade Polling ──────────────────────────────────
 
     async def _snapshot_prices(self) -> None:
-        """Fetch current prices for tracked markets via individual market endpoint."""
-        for ticker in list(self._tracked_markets.keys()):
+        """Fetch current prices for priority markets via individual market endpoint."""
+        for ticker in self._live_poll_markets:
             try:
                 m = await self._client.get_market(ticker)  # type: ignore[union-attr]
                 if not m:
@@ -228,8 +390,8 @@ class KalshiMonitorAgent(BaseAgent):
         await self.db.commit()
 
     async def _snapshot_orderbooks(self) -> None:
-        """Fetch orderbook snapshots for tracked markets."""
-        for ticker in list(self._tracked_markets.keys()):
+        """Fetch orderbook snapshots for priority markets."""
+        for ticker in self._live_poll_markets:
             try:
                 book = await self._client.get_orderbook(ticker)  # type: ignore[union-attr]
                 if not book:
@@ -245,13 +407,12 @@ class KalshiMonitorAgent(BaseAgent):
         await self.db.commit()
 
     async def _fetch_trades(self) -> None:
-        """Fetch recent trades for tracked markets."""
-        for ticker in list(self._tracked_markets.keys()):
+        """Fetch recent trades for priority markets."""
+        for ticker in self._live_poll_markets:
             try:
                 result = await self._client.get_trades(ticker=ticker, limit=50)  # type: ignore[union-attr]
                 trades = result.get("trades", [])
                 for t in trades:
-                    # Kalshi: taker_side is "yes" or "no"
                     taker_side = t.get("taker_side", "").upper()
                     side = "YES" if taker_side in ("YES", "BUY") else "NO"
                     count = float(t.get("count", 0))
@@ -266,27 +427,3 @@ class KalshiMonitorAgent(BaseAgent):
                 self.logger.debug("Trade fetch failed for %s", ticker)
                 continue
         await self.db.commit()
-
-    @staticmethod
-    def _categorize_event(event: dict) -> str:
-        """Categorize based on Kalshi's event category + title keywords."""
-        import re
-
-        category = (event.get("category", "") or "").lower()
-        title = (event.get("title", "") or "").lower()
-        text = f"{category} {title}"
-
-        def _has(words: tuple[str, ...]) -> bool:
-            return any(re.search(rf"\b{w}", text) for w in words)
-
-        if _has(("politic", "elect", "president", "congress", "senate", "vote")):
-            return "politics"
-        if _has(("sport", "nfl", "nba", "mlb", "game", "match")):
-            return "sports"
-        if _has(("crypto", "bitcoin", "btc", "ethereum", "blockchain")):
-            return "crypto"
-        if _has(("fed ", "gdp", "inflation", "interest rate", "econ", "cpi", "jobs")):
-            return "economics"
-        if _has(("artificial intelligence", "tech", "science", "space", "climate")):
-            return "science_tech"
-        return "other"

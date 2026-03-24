@@ -1,0 +1,58 @@
+# ─── Risk Dashboard Configuration ───
+# Controls risk metric computation, drawdown tracking, and daily P&L resets.
+# Loaded by sibyl/agents/analytics/risk_dashboard.py → start()
+#
+# THE RISK DASHBOARD IS SIBYL'S "FLIGHT RECORDER."
+# It continuously computes portfolio-wide risk metrics and stores them
+# for the web dashboard and circuit breaker evaluation.
+#
+# HOW TO MODIFY:
+#   - Edit this file and restart Sibyl.
+#   - For Docker: mount override via docker-compose volume.
+
+risk_dashboard:
+  # How often to compute aggregate risk metrics (seconds).
+  poll_interval_seconds: 30
+
+  # ── Drawdown Tracking ───────────────────────────────────────────────
+  # Sibyl tracks drawdown from the HIGH-WATER MARK (peak portfolio value).
+  # If the portfolio drops from its peak by more than these thresholds,
+  # the Risk Dashboard escalates warnings.
+  drawdown:
+    # Drawdown levels that trigger system_state warnings.
+    # Level 1: WARNING — informational, no action taken.
+    warning_threshold_pct: 0.05      # -5% from HWM
+
+    # Level 2: CAUTION — reduce new position sizing by 50%.
+    caution_threshold_pct: 0.10      # -10% from HWM
+
+    # Level 3: CRITICAL — halt all new positions, close losers.
+    critical_threshold_pct: 0.20     # -20% from HWM
+
+  # ── Daily P&L Reset ─────────────────────────────────────────────────
+  # Sibyl tracks daily P&L for each engine.  At midnight UTC, the daily
+  # counters reset.  This section controls that behavior.
+  daily_reset:
+    # UTC hour at which to reset daily_pnl counters (0–23).
+    reset_hour_utc: 0
+
+    # If an engine's daily P&L loss exceeds this percentage of its
+    # total_capital, the Allocator temporarily halts that engine.
+    # (Enforced by EngineStateManager, configured here for visibility.)
+    daily_loss_halt_pct: 0.06    # -6% daily loss → halt engine
+
+  # ── Metric Snapshots ────────────────────────────────────────────────
+  # The Risk Dashboard periodically writes a snapshot of all metrics
+  # to system_state for the web dashboard to read.
+  snapshot:
+    # Keys written to system_state:
+    #   risk_hwm            — all-time high-water mark ($)
+    #   risk_drawdown_pct   — current drawdown from HWM (%)
+    #   risk_drawdown_level — WARNING / CAUTION / CRITICAL / CLEAR
+    #   risk_total_exposure  — total deployed capital across all engines ($)
+    #   risk_open_positions  — count of OPEN positions
+    #   risk_daily_pnl_sge   — SGE daily P&L ($)
+    #   risk_daily_pnl_ace   — ACE daily P&L ($)
+    #   risk_win_rate_7d     — 7-day rolling win rate (%)
+    #   risk_sharpe_30d      — 30-day rolling Sharpe estimate
+    enabled: true

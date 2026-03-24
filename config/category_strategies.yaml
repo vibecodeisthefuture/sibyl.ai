@@ -1,0 +1,478 @@
+# ═══════════════════════════════════════════════════════════════════════
+# Category-Specific Strategy Configuration
+# ═══════════════════════════════════════════════════════════════════════
+#
+# Each of Kalshi's 10 market categories is a distinct ecosystem requiring
+# tailored investment strategies.  This file defines per-category:
+#
+#   - strategy_type:       The dominant approach for this vertical
+#   - preferred_engine:    Which engine (SGE/ACE) is the default handler
+#   - confidence_modifier: Multiplied by base confidence (+/- adjustment)
+#   - ev_modifier:         Multiplied by base EV (+/- adjustment)
+#   - max_exposure_pct:    Max % of total portfolio in this category
+#   - position_size_scale: Multiplier on Kelly position sizing (0.5 = half-size)
+#   - signal_weights:      Per-signal-type weight overrides (1.0 = neutral)
+#   - data_priority:       Ordered list of most-valuable intelligence sources
+#   - time_horizon:        short (<24h), medium (1-7d), long (7d+)
+#   - volatility_profile:  low, medium, high, extreme
+#   - notes:               Human-readable strategy description
+#
+# USAGE:
+#   The CategoryStrategyManager loads this file and provides per-signal
+#   adjustments to the SignalRouter and OrderExecutor.  When a signal
+#   arrives tagged with a market category, the strategy manager applies
+#   the relevant modifiers before routing/sizing.
+# ═══════════════════════════════════════════════════════════════════════
+
+# ── Politics ──────────────────────────────────────────────────────────
+# High-impact event markets (elections, legislation, appointments).
+# Driven by polls, insider signals, and social media sentiment.
+# HIGH correlation risk — one event can move dozens of markets.
+# POLICY: Maps to Mentions tier (Tier 1/2 hybrid). See investment_policy_config.yaml.
+Politics:
+  strategy_type: "event_driven_sentiment"
+  preferred_engine: "SGE"
+  policy_tier: "tier_1"            # Hybrid: SGE for scheduled, ACE for surprises
+  confidence_modifier: 0.95        # Slight discount — polls lie
+  ev_modifier: 1.05                # Slight premium — high liquidity
+  max_exposure_pct: 0.12
+  sge_cap: 0.15                    # Policy Section 12
+  ace_cap: 0.10                    # Policy Section 12
+  combined_cap: 0.20               # Policy Section 12
+  position_size_scale: 0.8         # Smaller positions — high correlation
+  signal_weights:
+    ARBITRAGE: 1.3                 # Cross-platform arb very viable
+    SENTIMENT: 1.2                 # X/social signals strongly predictive
+    WHALE: 0.9                     # Whale trades can be misleading (partisans)
+    VOLUME_SURGE: 1.0
+    MEAN_REVERSION: 0.7            # Mean reversion is weak in politics
+  data_priority:
+    - "x_sentiment"
+    - "perplexity_research"
+    - "reddit_sentiment"
+    - "volume_analysis"
+  time_horizon: "medium"
+  volatility_profile: "high"
+  correlation_penalty: 0.15        # Reduce sizing when multiple political bets active
+  notes: >
+    Political markets are sentiment-driven and highly correlated.
+    Focus on cross-platform arbitrage and social sentiment signals.
+    Avoid large concentrated positions — a single event (debate, scandal)
+    can cascade across the entire category.
+
+# ── Sports ────────────────────────────────────────────────────────────
+# Data-rich markets with established odds-making infrastructure.
+# Lines move fast near game time.  Smart money is very active.
+# POLICY: Tier 2 — Volatile. Pre-game and in-game are architecturally
+#         decoupled per investment policy Section 5.
+Sports:
+  strategy_type: "data_driven_momentum"
+  preferred_engine: "ACE"
+  policy_tier: "tier_2"
+  confidence_modifier: 1.05        # Sports data is reliable
+  ev_modifier: 1.0
+  max_exposure_pct: 0.18
+  sge_cap_pregame: 0.05            # Policy Section 12 — Pre-Game
+  ace_cap_pregame: 0.15
+  combined_cap_pregame: 0.18
+  sge_cap_ingame: 0.03             # Policy Section 12 — In-Game
+  ace_cap_ingame: 0.10
+  combined_cap_ingame: 0.12
+  position_size_scale: 1.1         # Slightly larger — more predictable
+  # Sports-specific policy fields
+  sports_sub_types:
+    pre_game:
+      kelly_fraction_override: null   # Use standard ACE kelly (0.35x)
+      entry_window_hours: [1, 168]    # 1h to 7 days before game
+    in_game:
+      kelly_shrinkage: 0.50           # 0.50x on top of ACE 0.35x → effective 0.175x
+      max_wager_pct_of_book: 0.02     # 2% of top-of-book depth
+      polymarket_limit_only: true
+  signal_weights:
+    WHALE: 1.4                     # Sharp money is highly predictive
+    VOLUME_SURGE: 1.3              # Late-line movement = injury/lineup info
+    MOMENTUM: 1.2                  # Odds momentum is meaningful
+    ARBITRAGE: 1.1                 # Sportsbook-to-Kalshi arb
+    SENTIMENT: 0.6                 # Fan sentiment is noise
+  data_priority:
+    - "whale_detection"
+    - "volume_analysis"
+    - "orderbook_depth"
+    - "perplexity_research"
+  time_horizon: "short"
+  volatility_profile: "medium"
+  correlation_penalty: 0.05        # Low correlation between games
+  notes: >
+    Sports markets are the most data-rich category.  Whale movements
+    are highly predictive (sharp bettors with edge).  Ignore fan sentiment.
+    Position quickly near events — lines move fast once information drops.
+
+# ── Culture ───────────────────────────────────────────────────────────
+# Awards, celebrity events, viral moments.  Highly unpredictable.
+# Social media is the primary signal source.
+Culture:
+  strategy_type: "sentiment_momentum"
+  preferred_engine: "ACE"
+  policy_tier: "tier_2"
+  confidence_modifier: 0.85        # High discount — culture is unpredictable
+  ev_modifier: 1.15                # Premium — inefficient markets
+  max_exposure_pct: 0.08
+  sge_cap: 0.05                    # Policy Section 12
+  ace_cap: 0.20
+  combined_cap: 0.22
+  position_size_scale: 0.6         # Small positions — high uncertainty
+  signal_weights:
+    SENTIMENT: 1.5                 # Social media IS the signal
+    VOLUME_SURGE: 1.2              # Sudden interest = information edge
+    WHALE: 0.8                     # Whales less informed in culture
+    ARBITRAGE: 1.0
+    MEAN_REVERSION: 0.5            # Momentum, not reversion
+  data_priority:
+    - "x_sentiment"
+    - "reddit_sentiment"
+    - "perplexity_research"
+    - "volume_analysis"
+  time_horizon: "short"
+  volatility_profile: "extreme"
+  correlation_penalty: 0.02
+  notes: >
+    Culture markets are sentiment-driven and highly volatile.
+    Social media signals are the primary edge.  Keep positions small
+    and exit quickly — viral moments can reverse in hours.
+
+# ── Crypto ────────────────────────────────────────────────────────────
+# Price-correlated markets.  24/7 trading.  Technical analysis applies.
+# Whale movements are extremely informative.
+Crypto:
+  strategy_type: "technical_momentum"
+  preferred_engine: "ACE"
+  policy_tier: "tier_2"
+  confidence_modifier: 1.0
+  ev_modifier: 0.95                # Slight discount — high competition
+  max_exposure_pct: 0.15
+  sge_cap: 0.10                    # Policy Section 12
+  ace_cap: 0.20
+  combined_cap: 0.25
+  position_size_scale: 0.9
+  signal_weights:
+    WHALE: 1.5                     # On-chain whale activity is gold
+    MOMENTUM: 1.4                  # Crypto trends hard
+    VOLUME_SURGE: 1.3              # Volume precedes price in crypto
+    ARBITRAGE: 1.2                 # Cross-platform arb common
+    SENTIMENT: 1.1                 # Crypto Twitter is informative (but noisy)
+    MEAN_REVERSION: 0.6            # Crypto doesn't mean-revert well
+  data_priority:
+    - "whale_detection"
+    - "volume_analysis"
+    - "x_sentiment"
+    - "orderbook_depth"
+  time_horizon: "short"
+  volatility_profile: "extreme"
+  correlation_penalty: 0.10        # Crypto markets are correlated (BTC dominance)
+  notes: >
+    Crypto markets are fast, volatile, and whale-driven.
+    On-chain data and exchange flow signals are highest priority.
+    Markets are correlated (BTC dominance effects).  Position for momentum,
+    not mean reversion.  24/7 monitoring is critical.
+
+# ── Climate ───────────────────────────────────────────────────────────
+# Long-duration markets tied to scientific data and seasonal patterns.
+# Slow-moving but predictable with the right data.
+# NOTE: Policy document uses "Weather" as the category name.
+# "Climate" is kept as an alias for backward compatibility.
+Climate:
+  strategy_type: "fundamental_long"
+  preferred_engine: "SGE"
+  policy_tier: "tier_1"
+  confidence_modifier: 1.10        # Climate data is reliable
+  ev_modifier: 1.0
+  max_exposure_pct: 0.10
+  sge_cap: 0.15                    # Policy Section 12
+  ace_cap: 0.05
+  combined_cap: 0.15
+  position_size_scale: 1.0
+  signal_weights:
+    MEAN_REVERSION: 1.3            # Seasonal patterns = reversion
+    ARBITRAGE: 1.1
+    WHALE: 0.7                     # Whale activity rare in climate
+    VOLUME_SURGE: 0.8              # Volume signals less useful
+    SENTIMENT: 0.5                 # Social sentiment is noise
+    MOMENTUM: 0.6                  # Climate doesn't trend like crypto
+  data_priority:
+    - "perplexity_research"        # Scientific forecasts
+    - "volume_analysis"
+    - "orderbook_depth"
+  time_horizon: "long"
+  volatility_profile: "low"
+  correlation_penalty: 0.03
+  notes: >
+    Climate markets are fundamentals-driven with long time horizons.
+    Perplexity/scientific research is the primary edge.  Social sentiment
+    is largely noise.  Stable positions with wide stop-losses.
+
+# ── Economics ─────────────────────────────────────────────────────────
+# CPI, Fed rate decisions, unemployment, GDP.  Calendar-driven events.
+# High-impact moments with clear resolution dates.
+Economics:
+  strategy_type: "event_calendar_fundamental"
+  preferred_engine: "SGE"
+  policy_tier: "tier_1"
+  confidence_modifier: 1.0
+  ev_modifier: 1.10                # Premium — high liquidity + clear catalysts
+  max_exposure_pct: 0.15
+  sge_cap: 0.20                    # Policy Section 12
+  ace_cap: 0.10
+  combined_cap: 0.25
+  position_size_scale: 1.0
+  signal_weights:
+    ARBITRAGE: 1.3                 # Macro arb opportunities
+    WHALE: 1.2                     # Institutional smart money
+    VOLUME_SURGE: 1.1              # Pre-data positioning
+    MEAN_REVERSION: 1.0            # Consensus forecasts mean-revert
+    MOMENTUM: 0.8                  # Less momentum in macro
+    SENTIMENT: 0.7                 # Sentiment is lagging for macro
+  data_priority:
+    - "perplexity_research"
+    - "whale_detection"
+    - "volume_analysis"
+    - "orderbook_depth"
+  time_horizon: "medium"
+  volatility_profile: "medium"
+  correlation_penalty: 0.12        # Macro events move multiple markets
+  notes: >
+    Economics markets are calendar-driven with clear data releases.
+    Position ahead of CPI/Fed/jobs data.  Cross-platform arbitrage
+    is strong because these markets exist on multiple platforms.
+
+# ── Mentions ──────────────────────────────────────────────────────────
+# Celebrity/public figure mention counts.  Pure social media play.
+# Extremely unpredictable, high variance.
+Mentions:
+  strategy_type: "social_momentum"
+  preferred_engine: "ACE"
+  policy_tier: "tier_1"            # Hybrid: SGE for scheduled, ACE for surprises
+  confidence_modifier: 0.80        # Heavy discount — very unpredictable
+  ev_modifier: 1.20                # High premium — markets are inefficient
+  max_exposure_pct: 0.06
+  sge_cap: 0.15                    # Policy Section 12
+  ace_cap: 0.15
+  combined_cap: 0.25
+  position_size_scale: 0.5         # Tiny positions — pure alpha capture
+  signal_weights:
+    SENTIMENT: 1.6                 # X/social IS the market
+    VOLUME_SURGE: 1.3              # Volume spikes = someone knows something
+    WHALE: 0.7                     # Whales less informed here
+    MOMENTUM: 1.2
+    ARBITRAGE: 0.8
+    MEAN_REVERSION: 0.4            # Mentions don't mean-revert
+  data_priority:
+    - "x_sentiment"
+    - "reddit_sentiment"
+    - "volume_analysis"
+  time_horizon: "short"
+  volatility_profile: "extreme"
+  correlation_penalty: 0.02
+  notes: >
+    Mentions markets are pure social media plays.  X sentiment is
+    the only reliable signal.  Keep positions extremely small — this
+    is high-variance alpha capture territory.
+
+# ── Companies ─────────────────────────────────────────────────────────
+# Earnings, M&A, regulatory actions, product launches.
+# Fundamental analysis + insider activity signals.
+Companies:
+  strategy_type: "fundamental_event"
+  preferred_engine: "SGE"
+  policy_tier: "tier_1"            # Hybrid
+  confidence_modifier: 1.0
+  ev_modifier: 1.05
+  max_exposure_pct: 0.12
+  sge_cap: 0.15                    # Policy Section 12
+  ace_cap: 0.15
+  combined_cap: 0.25
+  position_size_scale: 0.9
+  signal_weights:
+    WHALE: 1.4                     # Institutional positioning is very informative
+    VOLUME_SURGE: 1.2              # Pre-earnings volume = information
+    ARBITRAGE: 1.1
+    MEAN_REVERSION: 1.0            # Stock-correlated mean reversion
+    SENTIMENT: 0.8                 # Social sentiment is mixed quality
+    MOMENTUM: 0.9
+  data_priority:
+    - "whale_detection"
+    - "perplexity_research"
+    - "volume_analysis"
+    - "orderbook_depth"
+  time_horizon: "medium"
+  volatility_profile: "medium"
+  correlation_penalty: 0.08        # Same-sector companies are correlated
+  notes: >
+    Company markets are driven by fundamentals and event calendars.
+    Whale detection is highly predictive (institutional smart money).
+    Position ahead of earnings/data releases.
+
+# ── Financials ────────────────────────────────────────────────────────
+# Index levels, rate predictions, commodity prices.  Directly correlated
+# with tradfi markets.  Technical analysis highly applicable.
+Financials:
+  strategy_type: "technical_fundamental"
+  preferred_engine: "SGE"
+  policy_tier: "tier_1"            # Hybrid
+  confidence_modifier: 1.05
+  ev_modifier: 1.0
+  max_exposure_pct: 0.15
+  sge_cap: 0.15                    # Policy Section 12
+  ace_cap: 0.15
+  combined_cap: 0.25
+  position_size_scale: 1.0
+  signal_weights:
+    ARBITRAGE: 1.4                 # Tradfi-to-Kalshi arb is strong
+    WHALE: 1.3                     # Smart money from tradfi
+    MEAN_REVERSION: 1.2            # Financial markets mean-revert
+    VOLUME_SURGE: 1.1
+    MOMENTUM: 1.0
+    SENTIMENT: 0.5                 # Social sentiment is irrelevant
+  data_priority:
+    - "whale_detection"
+    - "orderbook_depth"
+    - "volume_analysis"
+    - "perplexity_research"
+  time_horizon: "medium"
+  volatility_profile: "medium"
+  correlation_penalty: 0.12        # Financial markets are correlated
+  notes: >
+    Financial markets correlate directly with tradfi.  Arbitrage between
+    Kalshi pricing and actual market data is the primary edge.
+    Mean reversion strategies work well here.
+
+# ── Tech & Science ────────────────────────────────────────────────────
+# AI milestones, product launches, regulatory approvals, scientific breakthroughs.
+# Research-heavy with long time horizons.
+"Tech & Science":
+  strategy_type: "research_fundamental"
+  preferred_engine: "SGE"
+  policy_tier: "tier_1"            # Hybrid: SGE for PDUFA, ACE for announcements
+  confidence_modifier: 0.90        # Slight discount — tech timelines slip
+  ev_modifier: 1.10                # Premium — markets misprice tech timing
+  max_exposure_pct: 0.10
+  sge_cap: 0.15                    # Policy Section 12
+  ace_cap: 0.15
+  combined_cap: 0.25
+  position_size_scale: 0.8
+  signal_weights:
+    MEAN_REVERSION: 1.1            # Tech timelines mean-revert to delays
+    ARBITRAGE: 1.0
+    SENTIMENT: 1.0                 # Tech Twitter can be informative
+    VOLUME_SURGE: 0.9
+    WHALE: 0.8
+    MOMENTUM: 0.7                  # Tech doesn't trend like financial markets
+  data_priority:
+    - "perplexity_research"
+    - "x_sentiment"
+    - "reddit_sentiment"
+    - "volume_analysis"
+  time_horizon: "long"
+  volatility_profile: "medium"
+  correlation_penalty: 0.05
+  notes: >
+    Tech & Science markets are research-driven with long timelines.
+    Perplexity/web research is the primary edge for understanding
+    technology readiness and regulatory progress.  Be skeptical
+    of aggressive timelines.
+
+# ── Weather ──────────────────────────────────────────────────────────
+# Temperature, precipitation, wind markets.  Ensemble model lag arbitrage.
+# POLICY: Tier 1 — Steady.  Highest data reliability.
+# NOTE: "Climate" is the legacy name; "Weather" is the policy-standard name.
+Weather:
+  strategy_type: "fundamental_long"
+  preferred_engine: "SGE"
+  policy_tier: "tier_1"
+  confidence_modifier: 1.10        # Weather data is very reliable
+  ev_modifier: 1.0
+  max_exposure_pct: 0.15
+  sge_cap: 0.15                    # Policy Section 12
+  ace_cap: 0.05
+  combined_cap: 0.15
+  position_size_scale: 1.0
+  signal_weights:
+    MEAN_REVERSION: 1.3            # Seasonal patterns
+    ARBITRAGE: 1.1
+    WHALE: 0.7
+    VOLUME_SURGE: 0.8
+    SENTIMENT: 0.3                 # Social sentiment is noise for weather
+    MOMENTUM: 0.6
+  data_priority:
+    - "open_meteo"
+    - "noaa"
+    - "nws"
+  time_horizon: "long"
+  volatility_profile: "low"
+  correlation_penalty: 0.03
+  notes: >
+    Weather markets are the most data-rich, lowest-variance category.
+    Ensemble model lag arbitrage: most bettors anchor to single consumer
+    forecasts.  Sibyl consumes ensemble model data hourly and detects when
+    model consensus has shifted but the market hasn't repriced.
+
+# ── Geopolitics & Legal ──────────────────────────────────────────────
+# Supreme Court, international elections, DOJ/FTC, treaties.
+# POLICY: Tier 3 — Restricted.  NO AUTO-ENTRY.
+# Entry requires full Policy Override Protocol (Section 17).
+"Geopolitics & Legal":
+  strategy_type: "monitoring_only"
+  preferred_engine: "ACE"
+  policy_tier: "tier_3"
+  confidence_modifier: 0.80        # Heavy discount — black swan risk
+  ev_modifier: 1.0
+  max_exposure_pct: 0.10
+  sge_cap: 0.00                    # Policy Section 12 — SGE cannot trade this
+  ace_cap: 0.10
+  combined_cap: 0.10
+  position_size_scale: 0.5
+  auto_entry: false                # Tier 3: override protocol required
+  signal_weights:
+    SENTIMENT: 1.2
+    WHALE: 1.0
+    VOLUME_SURGE: 1.0
+    ARBITRAGE: 0.8
+    MEAN_REVERSION: 0.3
+    MOMENTUM: 0.7
+  data_priority:
+    - "courtlistener"
+    - "govtrack"
+    - "gdelt"
+    - "x_sentiment"
+  time_horizon: "long"
+  volatility_profile: "extreme"
+  correlation_penalty: 0.15
+  notes: >
+    Geopolitics & Legal is Tier 3 — Restricted.  No auto-entry from
+    standard signal generation.  Entry requires the Policy Override
+    Protocol: confidence >= 0.90, EV >= 20%, 3+ independent sources,
+    no universal avoidance violations.  All overrides logged for
+    post-hoc stakeholder review.
+
+# ═══ Global Defaults ══════════════════════════════════════════════════
+# Applied when a market's category is unknown or unrecognized
+_defaults:
+  strategy_type: "balanced"
+  preferred_engine: "SGE"
+  confidence_modifier: 1.0
+  ev_modifier: 1.0
+  max_exposure_pct: 0.08
+  position_size_scale: 0.7
+  signal_weights:
+    WHALE: 1.0
+    VOLUME_SURGE: 1.0
+    MOMENTUM: 1.0
+    ARBITRAGE: 1.0
+    SENTIMENT: 1.0
+    MEAN_REVERSION: 1.0
+  data_priority:
+    - "volume_analysis"
+    - "perplexity_research"
+    - "x_sentiment"
+  time_horizon: "medium"
+  volatility_profile: "medium"
+  correlation_penalty: 0.05

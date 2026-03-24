@@ -22,11 +22,22 @@ env/
 
 # Environment / Secrets
 .env
+*.pem
+*.key
 
-# Database
-data/sibyl.db
-data/sibyl.db-wal
-data/sibyl.db-shm
+# Database & Data
+data/
+
+# Node
+node_modules/
+package-lock.json
+
+# Temp Office files
+~$*
+
+# Non-project files
+homelab_plan.md
+shadcn_agent/
 
 # Logs
 logs/

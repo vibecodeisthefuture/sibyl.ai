@@ -1,0 +1,61 @@
+# ─── Portfolio Allocator Configuration ───
+# Controls capital allocation, rebalancing, and balance synchronization.
+# Loaded by sibyl/agents/allocator/portfolio_allocator.py → start()
+#
+# THE ALLOCATOR IS THE "TREASURER" OF SIBYL.
+# It decides how much money each engine (SGE/ACE) gets to play with.
+# It syncs the real Kalshi balance into Sibyl's internal accounting.
+#
+# HOW TO MODIFY:
+#   - Edit this file and restart Sibyl.
+#   - For Docker: mount override via docker-compose volume.
+
+allocator:
+  # How often to run the full allocation cycle (seconds).
+  # 60s is frequent enough to catch balance changes from fills,
+  # but not so fast that we waste API calls on get_balance().
+  poll_interval_seconds: 60
+
+  # ── Capital Splits ──────────────────────────────────────────────────
+  # These MUST match sge_config.yaml and ace_config.yaml allocations.
+  # If they diverge, the Allocator's values WIN (it's the source of truth).
+  engine_splits:
+    SGE: 0.70    # 70% of total portfolio → Stable Growth Engine
+    ACE: 0.30    # 30% of total portfolio → Alpha Capture Engine
+
+  # ── Reserve ─────────────────────────────────────────────────────────
+  # Percentage of total balance held as CASH RESERVE (never allocated).
+  # Protects against short-term drawdowns and provides dry powder for
+  # unexpected high-conviction signals.
+  cash_reserve_pct: 0.05   # 5% of total balance held in reserve
+
+  # ── Rebalancing ─────────────────────────────────────────────────────
+  # Controls when the Allocator redistributes capital between engines.
+  rebalance:
+    # How far an engine's ACTUAL allocation can drift from its TARGET
+    # before the Allocator intervenes.  If SGE should be 70% but is
+    # actually at 64%, the drift is 6% — above the 5% threshold.
+    drift_threshold_pct: 0.05    # 5% drift triggers rebalance
+
+    # Minimum seconds between rebalances.  Prevents thrashing if prices
+    # are volatile and exposure fluctuates rapidly.
+    cooldown_seconds: 300        # 5 min cooldown between rebalances
+
+    # Maximum percentage of capital to move in a single rebalance.
+    # Prevents massive capital shifts that could disrupt open positions.
+    max_rebalance_pct: 0.10      # Move at most 10% of total per rebalance
+
+  # ── Balance Sync ────────────────────────────────────────────────────
+  # Controls how the Allocator syncs with the real Kalshi account balance.
+  balance_sync:
+    # In paper mode, use this as the simulated starting balance (dollars).
+    # In live mode, the Allocator calls KalshiClient.get_balance() instead.
+    paper_starting_balance_usd: 500.00
+
+    # Minimum time between Kalshi balance API calls (seconds).
+    # Avoids burning rate limit on a low-priority endpoint.
+    sync_interval_seconds: 120   # 2 minutes
+
+    # If the Kalshi balance differs from Sibyl's tracked total by more
+    # than this percentage, log a WARNING (possible external deposit/withdrawal).
+    discrepancy_alert_pct: 0.02  # 2% discrepancy triggers alert

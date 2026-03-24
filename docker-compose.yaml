@@ -27,5 +27,7 @@ services:
       - ./data:/app/data             # SQLite DB persists between restarts
       - ./logs:/app/logs             # Log files persist between restarts
       - ./config:/app/config         # Config files can be edited without rebuild
+    ports:
+      - "8088:8088"                  # Dashboard web UI
     restart: unless-stopped          # Auto-restart on crash (not manual stop)
-    command: ["python", "-m", "sibyl", "--agents", "monitor"]
+    command: ["python", "-m", "sibyl", "--agents", "all", "--dashboard"]

@@ -44,6 +44,16 @@ research:
       - news
   twitter_high_signal_min_likes: 100
   news_lookback_days: 7
+
+  # ── Perplexity Contextual Research ────────────────────────────────
+  # Sonar API: $1/M input + $1/M output tokens → ~$0.0005/call
+  # At 10 calls/day → ~$0.15/month.  Budget-capped for safety.
+  perplexity:
+    model: "sonar"               # cheapest model; use "sonar-pro" for deep research
+    max_tokens: 300              # compact responses to minimize cost
+    daily_call_cap: 30           # safety cap (~$0.015/day max)
+    # Only queried for markets passing breakout threshold (already filtered)
+    # + freshness caching prevents redundant queries
   high_conviction_confidence_threshold: 0.55
   moderate_confidence_threshold: 0.35
 

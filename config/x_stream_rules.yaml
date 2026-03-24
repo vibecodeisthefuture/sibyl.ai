@@ -1,0 +1,52 @@
+# ─── X (Twitter) Filtered Stream Rules ───
+# These rules are synced to the X v2 Filtered Stream API on agent startup.
+# Each rule defines a filter that the stream applies server-side.
+# Only tweets matching at least one rule are delivered.
+#
+# IMPORTANT: These rules consume your monthly tweet quota even when idle.
+# During development, keep non-essential rules disabled (enabled: false).
+# Enable the full set only in production.
+#
+# Rule syntax reference: https://developer.x.com/en/docs/twitter-api/tweets/filtered-stream/integrate/build-a-rule
+#
+# NOTE: Filtered Stream requires X API Basic tier ($200/mo) minimum.
+# On Free tier ($0), the agent operates in Recent Search fallback mode only.
+
+rules:
+  # ── Prediction market meta-signals ──────────────────────────────────
+  - tag: "polymarket_direct"
+    value: "polymarket lang:en -is:retweet"
+    enabled: true
+
+  - tag: "kalshi_direct"
+    value: "kalshi lang:en -is:retweet"
+    enabled: true
+
+  - tag: "prediction_market_general"
+    value: "(\"prediction market\" OR \"prediction markets\") lang:en -is:retweet"
+    enabled: true
+
+  # ── Political / election market triggers ────────────────────────────
+  - tag: "political_odds"
+    value: "(election OR poll OR senate OR congress) (odds OR probability OR betting OR \"percent chance\") lang:en -is:retweet"
+    enabled: true
+
+  # ── Economic / macro market triggers ────────────────────────────────
+  - tag: "macro_signals"
+    value: "(fed OR \"federal reserve\" OR inflation OR recession OR GDP) (probability OR odds OR \"basis points\" OR forecast) lang:en -is:retweet"
+    enabled: true
+
+  # ── Crypto market triggers ──────────────────────────────────────────
+  - tag: "crypto_narrative"
+    value: "(bitcoin OR ethereum OR crypto) (\"all time high\" OR crash OR halving OR regulation OR ETF) lang:en -is:retweet"
+    enabled: false  # Disabled by default — enable when crypto markets are active
+
+  # ── Science / tech triggers ─────────────────────────────────────────
+  - tag: "tech_events"
+    value: "(FDA OR \"clinical trial\" OR \"product launch\" OR IPO) (approved OR rejected OR delayed OR passed) lang:en -is:retweet"
+    enabled: true
+
+  # ── Sports market triggers ─────────────────────────────────────────
+  - tag: "sports_odds"
+    value: "(NFL OR NBA OR MLB OR soccer OR championship) (odds OR spread OR line OR prediction) lang:en -is:retweet"
+    enabled: false  # Disabled by default — enable during active seasons

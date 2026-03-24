@@ -146,7 +146,7 @@ CREATE TABLE IF NOT EXISTS positions (
     id              INTEGER PRIMARY KEY AUTOINCREMENT,
     market_id       TEXT NOT NULL REFERENCES markets(id),
     platform        TEXT NOT NULL CHECK (platform IN ('polymarket', 'kalshi')),
-    engine          TEXT NOT NULL CHECK (engine IN ('SGE', 'ACE')),
+    engine          TEXT NOT NULL CHECK (engine IN ('SGE', 'ACE', 'SGE_BLITZ')),
     side            TEXT NOT NULL CHECK (side IN ('YES', 'NO')),
     size            REAL NOT NULL,
     entry_price     REAL NOT NULL,
@@ -172,7 +172,7 @@ CREATE TABLE IF NOT EXISTS executions (
     id          INTEGER PRIMARY KEY AUTOINCREMENT,
     signal_id   INTEGER REFERENCES signals(id),
     position_id INTEGER REFERENCES positions(id),
-    engine      TEXT NOT NULL CHECK (engine IN ('SGE', 'ACE')),
+    engine      TEXT NOT NULL CHECK (engine IN ('SGE', 'ACE', 'SGE_BLITZ')),
     timestamp   TEXT NOT NULL DEFAULT (datetime('now')),
     platform    TEXT NOT NULL CHECK (platform IN ('polymarket', 'kalshi')),
     order_id    TEXT,
@@ -190,7 +190,7 @@ CREATE TABLE IF NOT EXISTS performance (
     id              INTEGER PRIMARY KEY AUTOINCREMENT,
     signal_id       INTEGER REFERENCES signals(id),
     position_id     INTEGER REFERENCES positions(id),
-    engine          TEXT NOT NULL CHECK (engine IN ('SGE', 'ACE')),
+    engine          TEXT NOT NULL CHECK (engine IN ('SGE', 'ACE', 'SGE_BLITZ')),
     resolved        INTEGER NOT NULL DEFAULT 0,
     correct         INTEGER,
     pnl             REAL,
@@ -206,7 +206,7 @@ CREATE INDEX IF NOT EXISTS idx_performance_engine ON performance(engine);
 -- Updated by the Portfolio Allocator agent.
 -- `circuit_breaker` can be 'CLEAR', 'WARNING', or 'TRIGGERED'.
 CREATE TABLE IF NOT EXISTS engine_state (
-    engine              TEXT PRIMARY KEY CHECK (engine IN ('SGE', 'ACE')),
+    engine              TEXT PRIMARY KEY CHECK (engine IN ('SGE', 'ACE', 'SGE_BLITZ')),
     total_capital       REAL NOT NULL DEFAULT 0.0,
     deployed_capital    REAL NOT NULL DEFAULT 0.0,
     available_capital   REAL NOT NULL DEFAULT 0.0,
@@ -266,11 +266,134 @@ CREATE TABLE IF NOT EXISTS market_research (
 CREATE INDEX IF NOT EXISTS idx_research_market ON market_research(market_id);
 CREATE INDEX IF NOT EXISTS idx_research_freshness ON market_research(freshness_score);
 
+-- ─── X (Twitter) Sentiment Tables (Sprint 8) ──────────────────────────
+-- Raw tweet buffer — ephemeral ring buffer for incoming tweets.
+-- Cleared after processing through the sentiment pipeline.
+CREATE TABLE IF NOT EXISTS x_raw (
+    tweet_id        TEXT PRIMARY KEY,
+    collected_at    TEXT NOT NULL DEFAULT (datetime('now')),
+    rule_tag        TEXT,
+    author_id       TEXT,
+    text            TEXT,
+    created_at      TEXT,
+    impression_count INTEGER DEFAULT 0,
+    retweet_count   INTEGER DEFAULT 0,
+    like_count      INTEGER DEFAULT 0,
+    reply_count     INTEGER DEFAULT 0,
+    quote_count     INTEGER DEFAULT 0,
+    conversation_id TEXT,
+    possibly_sensitive INTEGER DEFAULT 0,
+    raw_json        TEXT
+);
+
+-- Rejected tweets — persistent audit log for model improvement.
+CREATE TABLE IF NOT EXISTS x_rejected (
+    id              INTEGER PRIMARY KEY AUTOINCREMENT,
+    tweet_id        TEXT NOT NULL,
+    rejected_at     TEXT NOT NULL DEFAULT (datetime('now')),
+    reason_code     TEXT NOT NULL,
+    authenticity_score REAL,
+    bias_risk_score REAL,
+    rule_tag        TEXT
+);
+CREATE INDEX IF NOT EXISTS idx_x_rejected_reason ON x_rejected(reason_code);
+
+-- Per-window aggregations — persistent trend analysis.
+CREATE TABLE IF NOT EXISTS x_sentiment_windows (
+    id              INTEGER PRIMARY KEY AUTOINCREMENT,
+    market_id       TEXT,
+    window_start    TEXT NOT NULL,
+    window_end      TEXT NOT NULL,
+    tweet_count     INTEGER DEFAULT 0,
+    rejected_count  INTEGER DEFAULT 0,
+    net_sentiment   REAL,
+    sentiment_shift REAL,
+    volume_z_score  REAL,
+    bias_risk_mean  REAL,
+    authenticity_mean REAL,
+    reach_weighted_sentiment REAL,
+    cascade_flag    INTEGER DEFAULT 0,
+    political_homogeneity_flag INTEGER DEFAULT 0,
+    coordinated_narrative_flag INTEGER DEFAULT 0,
+    unsupported_volume_spike_flag INTEGER DEFAULT 0,
+    signal_generated INTEGER DEFAULT 0,
+    signal_id       INTEGER
+);
+CREATE INDEX IF NOT EXISTS idx_x_windows_market ON x_sentiment_windows(market_id);
+CREATE INDEX IF NOT EXISTS idx_x_windows_time ON x_sentiment_windows(window_start);
+
+-- Author quality cache — avoids refetching author metadata.
+CREATE TABLE IF NOT EXISTS x_author_cache (
+    author_id       TEXT PRIMARY KEY,
+    username        TEXT,
+    followers_count INTEGER,
+    following_count INTEGER,
+    tweet_count     INTEGER,
+    account_age_days INTEGER,
+    verified        INTEGER DEFAULT 0,
+    quality_score   REAL,
+    last_updated    TEXT NOT NULL DEFAULT (datetime('now'))
+);
+
+-- Blocklist — manually maintained list of rejected accounts.
+CREATE TABLE IF NOT EXISTS x_blocklist (
+    author_id       TEXT PRIMARY KEY,
+    username        TEXT,
+    added_at        TEXT NOT NULL DEFAULT (datetime('now')),
+    reason          TEXT
+);
+
+-- ─── Override Log (Investment Policy Section 17) ─────────────────────
+-- Records every Policy Override for post-hoc stakeholder review.
+-- All overrides are surfaced in the Daily Analytics Digest.
+CREATE TABLE IF NOT EXISTS override_log (
+    id                      INTEGER PRIMARY KEY AUTOINCREMENT,
+    signal_id               INTEGER REFERENCES signals(id),
+    market_id               TEXT NOT NULL,
+    category                TEXT,
+    timestamp               TEXT NOT NULL DEFAULT (datetime('now')),
+    confidence              REAL NOT NULL,
+    ev_estimate             REAL NOT NULL,
+    independent_sources     INTEGER NOT NULL,
+    override_reasoning      TEXT NOT NULL,
+    position_size_multiplier REAL NOT NULL DEFAULT 0.50,
+    engine                  TEXT NOT NULL DEFAULT 'ACE',
+    outcome                 TEXT,          -- PENDING / WON / LOST
+    pnl                     REAL,
+    reviewed                INTEGER DEFAULT 0
+);
+CREATE INDEX IF NOT EXISTS idx_override_log_ts ON override_log(timestamp);
+
 -- ─── Seed engine state rows ──────────────────────────────────────────
 -- Pre-populate the two engine rows so agents can UPDATE without INSERT checks.
 INSERT OR IGNORE INTO engine_state (engine) VALUES ('SGE');
 INSERT OR IGNORE INTO engine_state (engine) VALUES ('ACE');
+INSERT OR IGNORE INTO engine_state (engine) VALUES ('SGE_BLITZ');
 """
+
+# ── Schema Migration SQL ────────────────────────────────────────────────
+# ALTER TABLE statements to add new columns to existing tables.
+# These are run after the main schema to handle incremental schema updates.
+# SQLite doesn't support IF NOT EXISTS for ALTER TABLE, so we check
+# column existence via PRAGMA table_info before altering.
+MIGRATION_SQL = [
+    # Signals table: policy_tier and sports_sub_type columns (Sprint 11)
+    ("signals", "policy_tier", "ALTER TABLE signals ADD COLUMN policy_tier TEXT"),
+    ("signals", "sports_sub_type", "ALTER TABLE signals ADD COLUMN sports_sub_type TEXT"),
+    ("signals", "override_flag", "ALTER TABLE signals ADD COLUMN override_flag INTEGER DEFAULT 0"),
+    # Executions table: override tracking columns (Sprint 11)
+    ("executions", "override", "ALTER TABLE executions ADD COLUMN override INTEGER DEFAULT 0"),
+    ("executions", "override_reasoning", "ALTER TABLE executions ADD COLUMN override_reasoning TEXT"),
+    ("executions", "category", "ALTER TABLE executions ADD COLUMN category TEXT"),
+    ("executions", "policy_tier", "ALTER TABLE executions ADD COLUMN policy_tier TEXT"),
+    # Positions table: policy metadata (Sprint 11)
+    ("positions", "category", "ALTER TABLE positions ADD COLUMN category TEXT"),
+    ("positions", "sports_sub_type", "ALTER TABLE positions ADD COLUMN sports_sub_type TEXT"),
+    # Signals table: direction column (Sprint 17 — critical fix for correct trade side)
+    ("signals", "direction", "ALTER TABLE signals ADD COLUMN direction TEXT DEFAULT 'YES'"),
+    # Signals table: source_pipeline for pipeline attribution tracking
+    ("signals", "source_pipeline", "ALTER TABLE signals ADD COLUMN source_pipeline TEXT"),
+]
 
 
 class DatabaseManager:
@@ -334,7 +457,10 @@ class DatabaseManager:
         # Run full schema (CREATE IF NOT EXISTS = safe to repeat)
         await self._connection.executescript(SCHEMA_SQL)
         await self._connection.commit()
-        logger.info("Schema initialized (%d tables)", 12)
+
+        # Run incremental migrations (add new columns if they don't exist)
+        await self._run_migrations()
+        logger.info("Schema initialized (%d tables + migrations applied)", 18)
 
     @property
     def connection(self) -> aiosqlite.Connection:
@@ -379,6 +505,29 @@ class DatabaseManager:
             await self._connection.close()
             self._connection = None
             logger.info("Database connection closed.")
+
+    async def _run_migrations(self) -> None:
+        """Run incremental schema migrations (add columns to existing tables).
+
+        SQLite doesn't support ALTER TABLE ... ADD COLUMN IF NOT EXISTS,
+        so we check PRAGMA table_info to see if a column already exists
+        before attempting to add it.  This is safe to call repeatedly.
+        """
+        migration_count = 0
+        for table, column, sql in MIGRATION_SQL:
+            # Check if column already exists
+            existing = await self.fetchall(f"PRAGMA table_info({table})")
+            existing_cols = {row[1] for row in existing}  # row[1] is column name
+            if column not in existing_cols:
+                try:
+                    await self.execute(sql)
+                    migration_count += 1
+                    logger.debug("Migration applied: %s.%s", table, column)
+                except Exception as e:
+                    logger.warning("Migration failed (%s.%s): %s", table, column, e)
+        if migration_count > 0:
+            await self.commit()
+            logger.info("Applied %d schema migrations", migration_count)
 
     async def table_exists(self, table_name: str) -> bool:
         """Check if a table exists in the database (useful for testing)."""

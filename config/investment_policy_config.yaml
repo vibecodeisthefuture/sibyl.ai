@@ -1,0 +1,437 @@
+# ═══════════════════════════════════════════════════════════════════════
+# Sibyl Investment Policy Configuration
+# ═══════════════════════════════════════════════════════════════════════
+#
+# Machine-readable encoding of the Kalshi Investment Policy document.
+# This file is the authoritative runtime source for all policy rules.
+# Changes here take effect on next Sibyl restart.
+#
+# SECTIONS COVERED:
+#   - Tier classification (Section 2)
+#   - Category-tier mapping (Section 3)
+#   - Capital allocation caps per category/engine (Section 12)
+#   - Signal quality floors per tier (Section 14)
+#   - Data freshness max staleness (Section 15)
+#   - Universal avoidance rules (Section 13)
+#   - Override protocol parameters (Section 17)
+#   - Sports pre-game/in-game decoupling (Section 5)
+#   - In-game circuit breaker definitions (Section 5)
+# ═══════════════════════════════════════════════════════════════════════
+
+# ── Tier Definitions (Section 2 + Section 14) ──────────────────────────
+# Each tier defines:
+#   - engines: which engines can auto-trade in this tier
+#   - min_confidence: minimum signal confidence for entry
+#   - min_ev: minimum expected value for entry
+#   - auto_entry: whether signals can auto-route (Tier 3 = false)
+#   - min_signal_count / min_confirmations: additional quality gates
+tiers:
+  tier_1:
+    name: "Steady"
+    description: "Data-rich, scheduled, predictable base rates"
+    engines: ["SGE"]
+    default_stance: "auto_trade"
+    min_confidence: 0.60
+    min_ev: 0.03
+    auto_entry: true
+  tier_2:
+    name: "Volatile"
+    description: "Momentum-driven, sentiment-sensitive, live data required"
+    engines: ["ACE"]
+    default_stance: "auto_trade_with_quality_floor"
+    min_confidence: 0.65
+    min_ev: 0.06
+    min_signal_count: 20
+    auto_entry: true
+  tier_2_ingame:
+    name: "In-Game"
+    description: "Live sports in-game markets — higher risk, higher speed"
+    engines: ["ACE"]
+    default_stance: "auto_trade_with_quality_floor"
+    min_confidence: 0.70
+    min_ev: 0.08
+    min_confirmations: 2
+    auto_entry: true
+  tier_3:
+    name: "Restricted"
+    description: "High uncertainty, limited advance signal, black swan risk"
+    engines: ["ACE"]
+    default_stance: "override_only"
+    min_confidence: 0.85
+    min_ev: 0.15
+    min_source_confirmations: 3
+    auto_entry: false
+
+# ── Category → Tier Mapping (Section 3) ────────────────────────────────
+# Maps each Kalshi market category to its governing tier.
+# Categories with hybrid tiers use the more conservative tier for routing
+# and allow both engines per the policy.
+category_tier_map:
+  "Weather": "tier_1"
+  "Sports": "tier_2"
+  "Sports (Pre-Game)": "tier_2"
+  "Sports (In-Game)": "tier_2_ingame"
+  "Mentions": "tier_1"         # hybrid: SGE for scheduled, ACE for surprises
+  "Culture & Entertainment": "tier_2"
+  "Economics & Macro": "tier_1"
+  "Crypto & Digital Assets": "tier_2"
+  "Science & Technology": "tier_1"  # hybrid: SGE for PDUFA, ACE for announcements
+  "Geopolitics & Legal": "tier_3"
+  # Aliases for older category naming
+  "Politics": "tier_1"        # maps to Mentions
+  "Climate": "tier_1"         # maps to Weather
+  "Companies": "tier_1"       # hybrid
+  "Financials": "tier_1"      # hybrid
+  "Tech & Science": "tier_1"  # alias for Science & Technology
+  # Short DB category names (used by market_discovery.py classify_category)
+  "crypto": "tier_2"
+  "economics": "tier_1"
+  "weather": "tier_1"
+  "sports": "tier_2"
+  "culture": "tier_2"
+  "science": "tier_1"
+  "geopolitics": "tier_3"
+  "financial": "tier_1"
+  "politics": "tier_1"
+  "other": "tier_3"
+
+# ── Category Engine Permissions ────────────────────────────────────────
+# Which engines are allowed to trade each category.
+# Hybrid categories allow both SGE and ACE under different conditions.
+category_engine_permissions:
+  "Weather":
+    primary: "SGE"
+    allowed: ["SGE"]
+    ace_surprises_only: true
+  "Sports":
+    primary: "ACE"
+    allowed: ["ACE"]
+  "Mentions":
+    primary: "SGE"
+    allowed: ["SGE", "ACE"]
+  "Culture & Entertainment":
+    primary: "ACE"
+    allowed: ["ACE"]
+  "Economics & Macro":
+    primary: "SGE"
+    allowed: ["SGE"]
+    ace_surprises_only: true
+  "Crypto & Digital Assets":
+    primary: "ACE"
+    allowed: ["ACE", "SGE"]
+  "Science & Technology":
+    primary: "SGE"
+    allowed: ["SGE", "ACE"]
+  "Geopolitics & Legal":
+    primary: "ACE"
+    allowed: ["ACE"]
+    override_only: true
+
+# ── Capital Allocation Caps (Section 12) ───────────────────────────────
+# Per-engine, per-category caps as a fraction of that engine's capital.
+# 'combined' is the max total exposure across both engines for a category.
+capital_caps:
+  "Weather":
+    sge: 0.15
+    ace: 0.05
+    combined: 0.15
+  "Sports (Pre-Game)":
+    sge: 0.05
+    ace: 0.15
+    combined: 0.18
+  "Sports (In-Game)":
+    sge: 0.03
+    ace: 0.10
+    combined: 0.12
+  "Mentions (Political)":
+    sge: 0.15
+    ace: 0.10
+    combined: 0.20
+  "Mentions (Financial/Earnings)":
+    sge: 0.15
+    ace: 0.15
+    combined: 0.25
+  "Mentions":
+    sge: 0.15
+    ace: 0.15
+    combined: 0.25
+  "Culture & Entertainment":
+    sge: 0.05
+    ace: 0.20
+    combined: 0.22
+  "Economics & Macro":
+    sge: 0.20
+    ace: 0.10
+    combined: 0.25
+  "Crypto & Digital Assets":
+    sge: 0.10
+    ace: 0.20
+    combined: 0.25
+  "Science & Technology":
+    sge: 0.15
+    ace: 0.15
+    combined: 0.25
+  "Geopolitics & Legal":
+    sge: 0.00
+    ace: 0.10
+    combined: 0.10
+  # Aliases for older naming
+  "Politics":
+    sge: 0.15
+    ace: 0.10
+    combined: 0.20
+  "Climate":
+    sge: 0.15
+    ace: 0.05
+    combined: 0.15
+  "Companies":
+    sge: 0.15
+    ace: 0.15
+    combined: 0.25
+  "Financials":
+    sge: 0.15
+    ace: 0.15
+    combined: 0.25
+  "Tech & Science":
+    sge: 0.15
+    ace: 0.15
+    combined: 0.25
+
+# ── Data Freshness Rules (Section 15) ──────────────────────────────────
+# Maximum staleness in SECONDS before a signal is invalidated.
+data_freshness_max_staleness:
+  weather_forecast: 5400           # 90 minutes
+  sports_injury_report: 7200       # 2 hours pre-game
+  live_game_state: 60              # 60 seconds
+  in_game_circuit_breaker: 10      # per-event type (5s/review/10s)
+  economic_release: 1800           # 30 minutes post-release
+  x_sentiment_window: 300          # 5-minute rolling window
+  earnings_consensus: 86400        # 24 hours
+  earnings_call_transcript: 300    # 5 minutes post-call
+  fda_approval_calendar: 172800    # 48 hours
+  geopolitical_event: 3600         # 1 hour
+
+# ── Universal Avoidance Rules (Section 13) ────────────────────────────
+# Markets matching ANY of these conditions are rejected regardless of
+# signal strength or category.
+universal_avoidance:
+  min_open_interest_usd: 1000.0    # $1,000 liquidity floor
+  reject_subjective_resolution: true
+  reject_authority_gated: true
+  reject_duplicate_exposure: true  # Both engines on same market/direction
+  reject_announcement_polls: true
+  reject_sports_prop_crossover: true
+  reject_no_signal_coverage: true
+
+# Subjective resolution keywords — if any appear in resolution criteria,
+# flag the market for review.
+subjective_resolution_keywords:
+  - "at the discretion of"
+  - "as determined by"
+  - "in the opinion of"
+  - "at sole discretion"
+  - "subjective judgment"
+
+# ── Sports Pre-Game / In-Game Decoupling (Section 5) ─────────────────
+sports:
+  pregame:
+    entry_window_hours_before: 168  # 7 days before game
+    entry_window_hours_min: 1       # 1 hour before game
+    kelly_fraction_override: null   # Use standard ACE kelly
+    position_size_scale: 1.0
+  ingame:
+    kelly_shrinkage_factor: 0.50    # Applied on top of ACE's 0.35x Kelly
+    max_wager_pct_of_book: 0.02     # 2% of top-of-book depth
+    polymarket_limit_order_only: true
+
+  # In-game circuit breakers (event-triggered, Section 5)
+  ingame_circuit_breakers:
+    material_event:
+      description: "Goal, red card, ejection, major penalty"
+      action: "suspend_new_entries"
+      cooldown_seconds: 5
+    official_review:
+      description: "VAR / Official Review"
+      action: "suspend_new_entries"
+      cooldown_seconds: 0           # Until review concludes + 3 seconds
+      post_review_buffer_seconds: 3
+    suspicious_activity:
+      description: "Integrity flag or suspicious activity alert"
+      action: "halt"
+      cooldown_seconds: -1          # -1 = manual review required
+    rapid_odds_swing:
+      description: ">25% price move in <60 seconds"
+      action: "suspend_new_entries"
+      cooldown_seconds: 10
+      price_move_threshold_pct: 0.25
+      time_window_seconds: 60
+
+# ── Override Protocol (Section 17) ────────────────────────────────────
+# The safety valve for Tier 3 and beyond-cap opportunities.
+# Fully autonomous — no human approval gate.
+override_protocol:
+  min_confidence: 0.90
+  min_ev: 0.20
+  min_independent_sources: 3
+  max_position_size_multiplier: 0.50  # 50% of normal ACE max
+  log_reasoning_required: true
+  track_performance_separately: true
+  # Auto-calibration: if overrides underperform over 90 days,
+  # raise confidence threshold by this amount
+  calibration_period_days: 90
+  confidence_raise_increment: 0.02
+
+# ── Approved Data Sources Per Category ────────────────────────────────
+# Used for the 'no_signal_coverage' check. A market is flagged if its
+# category has zero configured data sources.
+approved_data_sources:
+  "Weather":
+    - "open_meteo"
+    - "noaa"
+    - "nws"
+  "Sports":
+    - "sportsrc"
+    - "api_sports"
+    - "balldontlie"
+    - "thesportsdb"
+    - "open_meteo"     # outdoor venue weather
+    - "x_sentiment"
+    - "reddit"
+  "Mentions":
+    - "fred"
+    - "bls"
+    - "sec_edgar"
+    - "congress"
+    - "fmp"
+    - "cme_fedwatch"
+    - "opensecrets"
+    - "x_sentiment"
+  "Culture & Entertainment":
+    - "x_sentiment"
+    - "reddit"
+    - "pytrends"
+    - "youtube"
+    - "tmdb"
+    - "spotify_charts"
+    - "wikipedia_pageviews"
+  "Economics & Macro":
+    - "fred"
+    - "bls"
+    - "bea"
+    - "cme_fedwatch"
+    - "fmp"
+  "Crypto & Digital Assets":
+    - "coingecko"
+    - "glassnode"
+    - "feargreed"
+    - "sec_edgar"
+    - "x_sentiment"
+  "Science & Technology":
+    - "openfda"
+    - "clinicaltrials"
+    - "sec_edgar"
+    - "x_sentiment"
+  "Geopolitics & Legal":
+    - "courtlistener"
+    - "govtrack"
+    - "gdelt"
+    - "x_sentiment"
+  # Short DB category name aliases (used by market_discovery classify_category)
+  "weather":
+    - "open_meteo"
+  "sports":
+    - "espn"
+    - "api_sports"
+    - "balldontlie"
+    - "thesportsdb"
+  "economics":
+    - "fred"
+    - "bls"
+    - "bea"
+  "crypto":
+    - "coingecko"
+    - "feargreed"
+  "culture":
+    - "tmdb"
+    - "wikipedia_pageviews"
+  "science":
+    - "openfda"
+    - "clinicaltrials"
+  "geopolitics":
+    - "courtlistener"
+    - "gdelt"
+    - "congress"
+  "financial":
+    - "fmp"
+    - "fred"
+  "politics":
+    - "congress"
+    - "gdelt"
+
+# ── Multi-Category Market Resolution (Section 16) ────────────────────
+multi_category:
+  # When a market spans multiple categories, assign it to the one with
+  # the strongest data source coverage. If coverage is equal, assign to
+  # the higher (more restrictive) tier.
+  prefer_strongest_coverage: true
+  prefer_higher_tier_on_tie: true
+
+# ── Implementation Priority (Section 19) ──────────────────────────────
+# Order in which category signal pipelines should be built.
+implementation_priority:
+  - "Weather"
+  - "Economics & Macro"
+  - "Mentions"
+  - "Sports (Pre-Game)"
+  - "Culture & Entertainment"
+  - "Crypto & Digital Assets"
+  - "Science & Technology"
+  - "Sports (In-Game)"
+  - "Geopolitics & Legal"
+
+# ── Blitz Partition Exemption (Section 20, Sprint 14) ────────────────
+# The SGE Blitz partition operates under its own risk framework for trades
+# meeting ALL of the following criteria:
+#   (a) Market closes within ≤90 seconds
+#   (b) Signal confidence exceeds 85%
+#   (c) Expected value exceeds 4%
+#   (d) Price is within 5-30¢ of terminal value (0 or 1)
+#
+# EXEMPT FROM (when all criteria met):
+#   - Engine category permissions (Section 3)
+#   - Signal type whitelist (SGE config)
+#   - Execution style requirements (limit vs market order)
+#   - Per-category capital caps (Section 12) — uses own concentration limits
+#   - Tier classification gates (Section 2) — uses own confidence floor
+#
+# STILL SUBJECT TO:
+#   - Universal avoidance rules (Section 13): min liquidity, subjective resolution
+#   - Blitz-specific circuit breaker (15% of Blitz pool drawdown)
+#   - Blitz position sizing limits (8% of pool per trade, 5 concurrent max)
+#   - Blitz category concentration limit (40% of pool per category)
+#   - Performance tracking: separate P&L, auto-calibration per Section 17
+#
+# RATIONALE (stakeholder-approved):
+#   - Blitz confidence floor (85%) exceeds all standard tier minimums
+#   - Capital isolation (14% of total portfolio) limits worst-case loss
+#   - Policy compliance would reduce Blitz utilization to ~5-10% (non-functional)
+#   - Market orders are the only viable execution for ≤90-second windows
+blitz_partition_exemption:
+  enabled: true
+  exempt_from:
+    - "engine_category_permissions"
+    - "signal_type_whitelist"
+    - "execution_style"
+    - "per_category_capital_caps"
+    - "tier_classification_gates"
+  still_enforced:
+    - "universal_avoidance_rules"
+    - "blitz_circuit_breaker"
+    - "blitz_position_sizing"
+    - "blitz_category_concentration"
+    - "separate_performance_tracking"
+  auto_calibration:
+    enabled: true
+    calibration_period_days: 90
+    confidence_raise_increment: 0.02
+    min_trades_for_calibration: 50

@@ -44,6 +44,8 @@ def config_dir(tmp_path):
         "position_lifecycle_config.yaml",
         "narrator_config.yaml",
         "breakout_scout_config.yaml",
+        "portfolio_allocator_config.yaml",
+        "risk_dashboard_config.yaml",
     ]:
         (config / name).write_text(yaml.dump({"test": True}))
 

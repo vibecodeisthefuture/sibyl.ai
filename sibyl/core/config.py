@@ -160,6 +160,8 @@ def load_agent_config(agent_name: str) -> dict[str, Any]:
         "position_lifecycle",
         "narrator",
         "breakout_scout",
+        "portfolio_allocator",
+        "risk_dashboard",
     }
     if agent_name not in valid:
         raise ValueError(f"Unknown agent config: {agent_name}. Valid: {valid}")
@@ -194,6 +196,8 @@ class SibylConfig:
         self.position_lifecycle = load_yaml("position_lifecycle_config.yaml")
         self.narrator = load_yaml("narrator_config.yaml")
         self.breakout_scout = load_yaml("breakout_scout_config.yaml")
+        self.portfolio_allocator = load_yaml("portfolio_allocator_config.yaml")
+        self.risk_dashboard = load_yaml("risk_dashboard_config.yaml")
         logger.info("All configuration files loaded successfully.")
 
     @property
