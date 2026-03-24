@@ -81,6 +81,7 @@ class BreakoutScout(BaseAgent):
         # API clients (initialized in start())
         self._reddit = None  # praw.Reddit instance
         self._sonar_llm = None  # SonarLLMClient for research synthesis (replaces Anthropic)
+        self._tavily = None  # TavilyClient for optional parallel web search
 
     @property
     def poll_interval(self) -> float:
@@ -180,12 +181,33 @@ class BreakoutScout(BaseAgent):
         except Exception:
             self.logger.warning("Failed to initialize Perplexity client")
 
+        # ── Initialize Tavily client (optional parallel web search) ────
+        self._tavily = None
+        tavily_cfg = self._research_config.get("tavily", {})
+        tavily_enabled = tavily_cfg.get("enabled", False)
+        if tavily_enabled and os.environ.get("TAVILY_API_KEY"):
+            try:
+                from sibyl.clients.tavily_client import TavilyClient as _TavilyClient
+
+                tavily = _TavilyClient()
+                if tavily.initialize(
+                    max_results=int(tavily_cfg.get("max_results", 5)),
+                    search_depth=tavily_cfg.get("search_depth", "basic"),
+                ):
+                    self._tavily = tavily
+                    self.logger.info("Tavily client initialized for parallel web search")
+                else:
+                    self.logger.info("Tavily client failed to initialize")
+            except Exception:
+                self.logger.warning("Failed to initialize Tavily client")
+
         self.logger.info(
-            "Breakout Scout started (threshold=%.0f, reddit=%s, perplexity=%s, sonar_llm=%s)",
+            "Breakout Scout started (threshold=%.0f, reddit=%s, perplexity=%s, sonar_llm=%s, tavily=%s)",
             self._breakout_threshold,
             "ready" if self._reddit else "unavailable",
             "ready" if self._perplexity else "unavailable",
             "ready" if self._sonar_llm else "unavailable",
+            "ready" if self._tavily else "unavailable",
         )
 
     async def run_cycle(self) -> None:
@@ -208,6 +230,8 @@ class BreakoutScout(BaseAgent):
             await self._sonar_llm.close()
         if self._perplexity:
             await self._perplexity.close()
+        if self._tavily:
+            await self._tavily.close()
         self.logger.info("Breakout Scout stopped")
 
     # ── Phase 1: Discovery ─────────────────────────────────────────────
@@ -340,6 +364,11 @@ class BreakoutScout(BaseAgent):
         perplexity_data = await self._fetch_perplexity_research(title, category)
         if perplexity_data:
             source_data["perplexity"] = perplexity_data
+
+        # ── Tavily (optional parallel web search) ─────────────────────────
+        tavily_data = await self._fetch_tavily_research(title)
+        if tavily_data:
+            source_data["tavily"] = tavily_data
 
         if not source_data:
             self.logger.debug("No source data for %s — skipping synthesis", market_id)
@@ -517,6 +546,48 @@ class BreakoutScout(BaseAgent):
             "key_factors": result.get("key_factors", []),
             "citations": result.get("citations", []),
         }
+
+    async def _fetch_tavily_research(self, title: str) -> dict[str, Any] | None:
+        """Fetch web search results from Tavily as a parallel research source.
+
+        Returns:
+            Dict with "score" (0.0–1.0), "summary", "sources",
+            or None if Tavily is unavailable or returns no results.
+        """
+        if not self._tavily:
+            return None
+
+        try:
+            results = await self._tavily.search_market(title)
+            if not results:
+                return None
+
+            # Build a summary from the top results
+            summaries = []
+            sources = []
+            for r in results[:5]:
+                if r.get("content"):
+                    summaries.append(r["content"][:200])
+                if r.get("url"):
+                    sources.append(r["url"])
+
+            # Use average relevance score from Tavily (0.0–1.0)
+            avg_score = (
+                sum(r.get("score", 0.5) for r in results) / len(results)
+                if results
+                else 0.5
+            )
+
+            return {
+                "score": round(avg_score, 3),
+                "summary": " | ".join(summaries) if summaries else "",
+                "sources": sources[:5],
+                "results_count": len(results),
+            }
+
+        except Exception:
+            self.logger.exception("Tavily fetch failed for: %s", title)
+            return None
 
     async def _synthesize_research(
         self,

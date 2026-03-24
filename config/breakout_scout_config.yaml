@@ -54,6 +54,16 @@ research:
     daily_call_cap: 30           # safety cap (~$0.015/day max)
     # Only queried for markets passing breakout threshold (already filtered)
     # + freshness caching prevents redundant queries
+
+  # ── Tavily Web Search (optional parallel source) ────────────────
+  # Requires TAVILY_API_KEY env var.  When enabled, Tavily results are
+  # merged into the research packet alongside Perplexity data.
+  # Free tier: 1,000 API credits/month.  Basic search = 1 credit/call.
+  tavily:
+    enabled: false               # set to true + provide TAVILY_API_KEY to activate
+    max_results: 5               # number of search results per query
+    search_depth: "basic"        # "basic" (1 credit) or "advanced" (2 credits)
+
   high_conviction_confidence_threshold: 0.55
   moderate_confidence_threshold: 0.35
 

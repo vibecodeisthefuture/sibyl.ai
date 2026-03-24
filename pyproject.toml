@@ -24,6 +24,9 @@ dependencies = [
 ]
 
 [project.optional-dependencies]
+tavily = [
+    "tavily-python>=0.5",
+]
 dev = [
     "pytest>=8.0",
     "pytest-asyncio>=0.24",
