@@ -461,9 +461,17 @@ async def seed_markets(
                 )
 
             written += 1
+
+            # Sprint 22: Incremental commits every 500 markets so pipelines
+            # can find and analyze markets without waiting for full gap-fill.
+            if written % 500 == 0:
+                await db.commit()
+                logger.info("seed_markets: committed %d/%d markets", written, len(markets))
+
         except Exception as e:
             logger.debug("Failed to seed market %s: %s", ticker, e)
 
     if written:
         await db.commit()
+        logger.info("seed_markets: final commit — %d markets written total", written)
     return written

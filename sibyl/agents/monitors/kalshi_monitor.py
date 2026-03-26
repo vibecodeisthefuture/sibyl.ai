@@ -178,9 +178,9 @@ class KalshiMonitorAgent(BaseAgent):
     async def _refresh_markets_with_discovery(self, gap_fill: bool = True) -> None:
         """Full market discovery using the shared gap-fill system.
 
-        This uses the market_discovery module which scans ALL open events,
-        classifies them into Sibyl's 8 pipeline categories, and seeds
-        them into the markets table with correct category assignments.
+        Sprint 22: Two-phase seeding — standard-fetch markets are seeded
+        immediately so pipelines can analyze crypto brackets within seconds.
+        The slower gap-fill runs afterward with its own incremental commits.
 
         Args:
             gap_fill: If True, run the full gap-fill scan (~600s on first run).
@@ -190,12 +190,52 @@ class KalshiMonitorAgent(BaseAgent):
             self.logger.info(
                 "Starting market discovery (gap_fill=%s)...", gap_fill
             )
-            events, markets = await discover_markets(
-                self._client, max_pages=15, gap_fill=gap_fill,
+
+            # Phase 1: Standard fetch — seed immediately (no gap-fill delay)
+            events_p1, markets_p1 = await discover_markets(
+                self._client, max_pages=15, gap_fill=False,
+            )
+            written_p1 = await seed_markets(self.db, markets_p1)
+            self.logger.info(
+                "Phase 1 seeded: %d events → %d markets written to DB",
+                len(events_p1), written_p1,
             )
 
-            # Seed all discovered markets to DB with proper categories
-            written = await seed_markets(self.db, markets)
+            # Update tracked markets from phase 1 immediately
+            for m in markets_p1:
+                ticker = m.get("ticker", "")
+                if ticker:
+                    self._tracked_markets[ticker] = {
+                        "title": m.get("title", ""),
+                        "event_ticker": m.get("_event_ticker", ""),
+                    }
+
+            # Phase 2: Gap-fill — runs if requested, seeds incrementally
+            if gap_fill:
+                _, markets_p2 = await discover_markets(
+                    self._client, max_pages=0, gap_fill=True,
+                )
+                # Filter out duplicates already seeded in phase 1
+                p1_tickers = {m.get("ticker", "") for m in markets_p1}
+                new_markets = [m for m in markets_p2 if m.get("ticker", "") not in p1_tickers]
+                written_p2 = await seed_markets(self.db, new_markets)
+                self.logger.info(
+                    "Phase 2 gap-fill seeded: %d new markets written to DB",
+                    written_p2,
+                )
+
+                # Update tracked markets from phase 2
+                for m in new_markets:
+                    ticker = m.get("ticker", "")
+                    if ticker:
+                        self._tracked_markets[ticker] = {
+                            "title": m.get("title", ""),
+                            "event_ticker": m.get("_event_ticker", ""),
+                        }
+
+            events = events_p1
+            markets = markets_p1
+            written = written_p1
 
             # Update tracked markets dict for price/orderbook polling
             for m in markets:
