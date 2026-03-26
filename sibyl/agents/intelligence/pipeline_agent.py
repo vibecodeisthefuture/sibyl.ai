@@ -101,13 +101,40 @@ class PipelineAgent(BaseAgent):
     async def start(self) -> None:
         """Initialize the PipelineManager and verify readiness.
 
-        This is called once when the agent starts. If initialization fails,
-        the agent will not proceed to the run loop.
+        Sprint 22.5: Waits for Kalshi markets to be available in the DB
+        before first pipeline run, preventing wasted no-data cycles.
         """
+        import asyncio
+
         self.logger.info(
             "Starting PipelineAgent with poll_interval=%.0f seconds",
             self.poll_interval,
         )
+
+        # Sprint 22.5: Wait for Kalshi data before first pipeline run
+        # KalshiMonitor starts first and seeds markets incrementally.
+        # Wait up to 90s for at least 100 markets to appear.
+        for attempt in range(18):  # 18 × 5s = 90s max
+            count_row = await self._db.fetchone(
+                "SELECT count(*) as n FROM markets WHERE platform = 'kalshi'"
+            )
+            kalshi_count = count_row["n"] if count_row else 0
+            if kalshi_count >= 100:
+                self.logger.info(
+                    "Data readiness: %d Kalshi markets available — proceeding",
+                    kalshi_count,
+                )
+                break
+            self.logger.info(
+                "Data readiness: waiting for Kalshi markets (%d/100, attempt %d/18)...",
+                kalshi_count, attempt + 1,
+            )
+            await asyncio.sleep(5)
+        else:
+            self.logger.warning(
+                "Data readiness: timeout — proceeding with %d Kalshi markets",
+                kalshi_count,
+            )
 
         # Sprint 20: Pass category filter to PipelineManager
         # so only requested pipelines are initialized (saves API calls + init time)

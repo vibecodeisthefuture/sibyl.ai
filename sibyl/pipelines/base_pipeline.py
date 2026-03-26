@@ -216,8 +216,7 @@ class BasePipeline(ABC):
                 WHERE status = 'active'
                   AND platform = 'kalshi'
                   AND close_date <= datetime('now', '+{self.MARKET_HORIZON_DAYS} days')
-                  AND (category IN ({placeholders})
-                       OR category IS NULL)
+                  AND category IN ({placeholders})
                 ORDER BY close_date ASC""",
             tuple(category_variants),
         )

@@ -141,9 +141,8 @@ async def run_paper_sanity_check(duration_seconds: int = 300) -> bool:
     await db.initialize()
 
     # Import and create all agents (same as __main__.py)
-    from sibyl.agents.monitors.polymarket_monitor import PolymarketMonitorAgent
     from sibyl.agents.monitors.kalshi_monitor import KalshiMonitorAgent
-    from sibyl.agents.monitors.sync_agent import CrossPlatformSyncAgent
+    from sibyl.agents.monitors.hyperliquid_price_agent import HyperliquidPriceAgent
     from sibyl.agents.intelligence.market_intelligence import MarketIntelligenceAgent
     from sibyl.agents.intelligence.signal_generator import SignalGenerator
     from sibyl.agents.intelligence.signal_router import SignalRouter
@@ -159,23 +158,24 @@ async def run_paper_sanity_check(duration_seconds: int = 300) -> bool:
     from sibyl.agents.scout.breakout_scout import BreakoutScout
     from sibyl.agents.narrator.narrator import Narrator
     from sibyl.agents.sentiment.x_sentiment_agent import XSentimentAgent
-    from sibyl.agents.monitors.hyperliquid_price_agent import HyperliquidPriceAgent
 
     agents = [
-        PolymarketMonitorAgent(db=db, config=config.system),
+        # Phase 1: Data ingestion (Kalshi-first, then Hyperliquid for crypto prices)
         KalshiMonitorAgent(db=db, config=config.system),
-        CrossPlatformSyncAgent(db=db, config=config.system),
         HyperliquidPriceAgent(db=db, config=config.system),
+        # Phase 2: Intelligence + signal generation
         MarketIntelligenceAgent(db=db, config=config.system),
         SignalGenerator(db=db, config=config.system, intel_agent=None),
         SignalRouter(db=db, config=config.system),
         PipelineAgent(db=db, config=config.system, categories="all"),
+        # Phase 3: Execution
         BlitzScanner(db=db, config=config.system),
         BlitzExecutor(db=db, config=config.system, mode="paper"),
         OrderExecutor(db=db, config=config.system, mode="paper"),
         PositionLifecycleManager(db=db, config=config.system),
         EngineStateManager(db=db, config=config.system),
         PortfolioAllocator(db=db, config=config.system, mode="paper"),
+        # Phase 4: Analytics + notifications
         RiskDashboard(db=db, config=config.system),
         Notifier(db=db, config=config.system),
         BreakoutScout(db=db, config=config.system),
