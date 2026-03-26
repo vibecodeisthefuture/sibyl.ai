@@ -202,8 +202,16 @@ class SibylConfig:
 
     @property
     def db_path(self) -> str:
-        """Path to the SQLite database file (default: 'data/sibyl.db')."""
-        return self.system.get("database", {}).get("path", "data/sibyl.db")
+        """Path to the SQLite database file (default: 'data/sibyl.db').
+
+        Relative paths are resolved against the project root to ensure
+        consistent behavior regardless of the working directory.
+        """
+        raw = self.system.get("database", {}).get("path", "data/sibyl.db")
+        p = Path(raw)
+        if not p.is_absolute():
+            p = _PROJECT_ROOT / p
+        return str(p)
 
     @property
     def mode(self) -> str:

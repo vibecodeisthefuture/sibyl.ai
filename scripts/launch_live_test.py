@@ -71,7 +71,7 @@ async def verify_kalshi_auth() -> dict:
     if not Path(key_path).exists():
         raise RuntimeError(f"Kalshi RSA key not found at {key_path}")
 
-    client = KalshiClient(key_id=key_id, private_key_path=key_path)
+    client = KalshiClient(key_id=key_id, private_key_path=key_path, tier="advanced")
 
     # Test balance endpoint — get_balance() returns float (dollars) or None
     balance_dollars = await client.get_balance()
