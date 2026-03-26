@@ -126,13 +126,14 @@ class KalshiMonitorAgent(BaseAgent):
 
         # ── Market list refresh (every 24 cycles ≈ 2 min at 5s polling) ─
         if self._cycle_count % 24 == 0:
-            # First refresh or every 360 cycles (~30 min): full gap-fill discovery
-            # This runs as a background task so it doesn't block price polling.
-            if not self._gap_fill_done or self._cycle_count % 360 == 0:
+            # Sprint 22.5: Standard fetch with limit=200 now covers ALL 27K+
+            # markets in ~3s, making gap-fill redundant.  First run does a full
+            # discovery via _refresh_markets_with_discovery; subsequent runs
+            # use the lighter _refresh_markets_standard to pick up new listings.
+            if not self._gap_fill_done:
                 if self._gap_fill_task is None or self._gap_fill_task.done():
-                    use_gap_fill = not self._gap_fill_done
                     self._gap_fill_task = asyncio.create_task(
-                        self._refresh_markets_with_discovery(gap_fill=use_gap_fill)
+                        self._refresh_markets_with_discovery(gap_fill=False)
                     )
             else:
                 # Standard refresh: just paginate for new/updated markets
