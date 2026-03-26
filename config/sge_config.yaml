@@ -1,11 +1,12 @@
 # ─── Stable Growth Engine (SGE) Configuration ───
-# SPRINT 20: Crypto-only pivot. SGE is now the SOLE engine with 95% of capital.
-# Risk parameters tuned for crypto market characteristics:
-#   - Higher Kelly (0.25) for aggressive crypto sizing
-#   - Lower EV floor (0.02) to eliminate the dead zone
-#   - Lower confidence floor (0.55) to capture more crypto signals
-#   - Wider position limits (5%) since we're single-category
-#   - Wider stop loss (25%) — crypto brackets are volatile
+# SPRINT 22: Risk parameters eased for faster profit scaling.
+# Stakeholder-approved: ≥60% confidence floor, aggressive sizing.
+#   - Kelly (0.30) for aggressive scaling
+#   - EV floor (0.015) — captures more bracket edges
+#   - Confidence floor (0.60) — stakeholder's educated bet threshold
+#   - Position limits (8%) for meaningful per-trade impact
+#   - Wider stop loss (35%) — crypto brackets are volatile
+#   - Wider circuit breakers (25% drawdown, 12% daily loss)
 
 engine:
   name: "SGE"
@@ -13,15 +14,15 @@ engine:
 
 risk_policy:
   active_policy: "CRYPTO_FOCUSED"  # Sprint 20: tuned for crypto-only trading
-  kelly_fraction: 0.25             # Aggressive Kelly for crypto (was 0.15)
-  min_ev_threshold: 0.02           # +2% floor — eliminates dead zone (was 0.03)
-  min_confidence: 0.55             # Lower floor to capture more crypto signals (was 0.60)
-  max_single_position_pct: 0.05   # 5% of engine capital per position (was 2%)
-  max_platform_exposure_pct: 0.60  # 60% of engine capital on Kalshi (was 25%)
-  max_total_exposure_pct: 0.70     # 70% of engine capital total (was 55%)
-  circuit_breaker_drawdown_pct: 0.15   # -15% engine drawdown (was -10%)
-  daily_loss_limit_pct: 0.08       # -8% of engine capital (was -4%)
-  per_market_stop_loss_pct: 0.25   # exit at -25% of position value (was -35%)
+  kelly_fraction: 0.30             # Sprint 22: aggressive scaling (was 0.25)
+  min_ev_threshold: 0.015          # Sprint 22: +1.5% floor for more signals (was 0.02)
+  min_confidence: 0.60             # Sprint 22: stakeholder ≥60% floor (was 0.55)
+  max_single_position_pct: 0.08   # Sprint 22: 8% per position for impact (was 5%)
+  max_platform_exposure_pct: 0.70  # Sprint 22: 70% Kalshi exposure (was 60%)
+  max_total_exposure_pct: 0.80     # Sprint 22: 80% total for aggressive scaling (was 70%)
+  circuit_breaker_drawdown_pct: 0.25   # Sprint 22: -25% engine drawdown (was -15%)
+  daily_loss_limit_pct: 0.12       # Sprint 22: -12% daily loss (was -8%)
+  per_market_stop_loss_pct: 0.35   # Sprint 22: wider stop for volatile crypto (was -25%)
 
 # Sprint 20: Expanded whitelist to accept ALL pipeline signal types.
 # The old whitelist (ARBITRAGE, MEAN_REVERSION, LIQUIDITY_VACUUM) blocked

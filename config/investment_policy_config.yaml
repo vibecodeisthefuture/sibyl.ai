@@ -39,8 +39,8 @@ tiers:
     description: "Momentum-driven, sentiment-sensitive, live data required"
     engines: ["SGE", "ACE"]           # Sprint 20: SGE now trades Tier 2 (crypto)
     default_stance: "auto_trade_with_quality_floor"
-    min_confidence: 0.55              # Sprint 20: lowered from 0.65 for crypto
-    min_ev: 0.02                      # Sprint 20: lowered from 0.06 — eliminates dead zone
+    min_confidence: 0.60              # Sprint 22: stakeholder floor — educated bets at ≥60%
+    min_ev: 0.015                     # Sprint 22: lowered from 0.02 for faster scaling
     min_signal_count: 10              # Sprint 20: lowered from 20
     auto_entry: true
   tier_2_ingame:
@@ -387,18 +387,18 @@ approved_data_sources:
 # Categories without a profile fall back to their tier's defaults.
 per_category_risk_profiles:
   crypto:
-    min_confidence: 0.55
-    min_ev: 0.02                   # Eliminates the 0.03-0.06 dead zone
-    kelly_fraction: 0.25           # Aggressive Kelly for crypto
-    max_position_pct: 0.05         # 5% of engine capital per position
+    min_confidence: 0.60           # Sprint 22: stakeholder floor — educated bets at ≥60%
+    min_ev: 0.015                  # Sprint 22: lowered from 0.02 for more signal throughput
+    kelly_fraction: 0.30           # Sprint 22: aggressive Kelly for faster scaling (was 0.25)
+    max_position_pct: 0.08         # Sprint 22: 8% of engine capital per position (was 5%)
     max_category_pct: 0.60         # 60% of engine capital in crypto total
-    stop_loss_pct: 0.25            # Exit at -25% of position value
-    circuit_breaker_drawdown_pct: 0.15  # -15% category drawdown halts trading
+    stop_loss_pct: 0.35            # Sprint 22: wider stops for volatile crypto (was 0.25)
+    circuit_breaker_drawdown_pct: 0.25  # Sprint 22: -25% category drawdown (was -15%)
     dedup_window_minutes: 5        # Fast dedup — crypto prices move every minute
     pipeline_interval_seconds: 300 # 5-minute pipeline cycles
     market_horizon_days: 7         # Only trade markets closing within 7 days
     # Sprint 20.5: Always-On Bracket Trader parameters
-    bracket_min_edge: 0.02         # 2-cent minimum edge for BRACKET_MODEL signals
+    bracket_min_edge: 0.015        # Sprint 22: 1.5-cent min edge (was 2 cents)
     target_assets:                 # Persistent participation assets
       - bitcoin
       - ethereum
