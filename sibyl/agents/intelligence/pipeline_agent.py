@@ -115,7 +115,7 @@ class PipelineAgent(BaseAgent):
         # KalshiMonitor starts first and seeds markets incrementally.
         # Wait up to 90s for at least 100 markets to appear.
         for attempt in range(18):  # 18 × 5s = 90s max
-            count_row = await self._db.fetchone(
+            count_row = await self.db.fetchone(
                 "SELECT count(*) as n FROM markets WHERE platform = 'kalshi'"
             )
             kalshi_count = count_row["n"] if count_row else 0
