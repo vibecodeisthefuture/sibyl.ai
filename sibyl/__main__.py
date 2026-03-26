@@ -25,6 +25,7 @@ AGENTS STARTED:
         - PolymarketMonitorAgent: Ingests Polymarket data (read-only)
         - KalshiMonitorAgent:     Ingests Kalshi data (primary platform)
         - CrossPlatformSyncAgent: Matches markets + detects price divergences
+        - HyperliquidPriceAgent: 1s crypto spot prices from Hyperliquid (Sprint 21)
     --agents intelligence (or all):
         - MarketIntelligenceAgent: 3 surveillance modes (Whale, Volume, OrderBook)
         - SignalGenerator:         Composite scoring, EV estimation
@@ -110,10 +111,12 @@ async def main(args: argparse.Namespace) -> None:
         from sibyl.agents.monitors.polymarket_monitor import PolymarketMonitorAgent
         from sibyl.agents.monitors.kalshi_monitor import KalshiMonitorAgent
         from sibyl.agents.monitors.sync_agent import CrossPlatformSyncAgent
+        from sibyl.agents.monitors.hyperliquid_price_agent import HyperliquidPriceAgent
 
         agents.append(PolymarketMonitorAgent(db=db, config=config.system))
         agents.append(KalshiMonitorAgent(db=db, config=config.system))
         agents.append(CrossPlatformSyncAgent(db=db, config=config.system))
+        agents.append(HyperliquidPriceAgent(db=db, config=config.system))
 
     # Intelligence layer agents (Sprint 2)
     intel_agent = None  # Shared reference so SignalGenerator can read detections

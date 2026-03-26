@@ -141,6 +141,13 @@ class KalshiMonitorAgent(BaseAgent):
         if not self._tracked_markets:
             return
 
+        # ── Auto-close expired markets (every 120 cycles ≈ 10 min) ────
+        # Sprint 21.5: DB-level guard — marks markets as closed once their
+        # close_date has passed.  Prevents stale markets from accumulating
+        # even if the API filter misses some edge cases.
+        if self._cycle_count % 120 == 0:
+            await self._auto_close_expired_markets()
+
         # ── Refresh live poll priority list (every 12 cycles ≈ 1 min) ──
         if self._cycle_count % 12 == 0 or not self._live_poll_markets:
             await self._refresh_live_poll_list()
@@ -224,10 +231,16 @@ class KalshiMonitorAgent(BaseAgent):
 
         This is the quick refresh that runs every 2 minutes to pick up
         newly listed markets without the overhead of full gap-fill.
+
+        Sprint 21.5: Uses min_close_ts=now to filter out expired events at the
+        API level, reducing payload size and preventing stale market accumulation.
         """
+        import time
+        now_ts = int(time.time())
         try:
             result = await self._client.get_events(  # type: ignore[union-attr]
                 limit=100, status="open", with_nested_markets=True,
+                min_close_ts=now_ts,
             )
         except Exception:
             self.logger.exception("Failed to fetch Kalshi events")
@@ -294,6 +307,60 @@ class KalshiMonitorAgent(BaseAgent):
 
         await self.db.commit()
         self.logger.info("Refreshed %d Kalshi markets from %d events", upserted, len(events))
+
+    # ── DB Auto-Close Guard ────────────────────────────────────────────
+
+    async def _auto_close_expired_markets(self) -> None:
+        """Mark markets as closed once their close_date has passed.
+
+        Sprint 21.5: DB-level safety net that runs every ~10 minutes.
+        This catches markets that were active in the DB but whose close_date
+        has now passed — prevents stale markets from being polled, traded,
+        or clogging the signal pipeline.
+
+        Also expires any ROUTED/PENDING signals that reference newly-closed
+        markets, preventing 409 Conflict errors on order placement.
+        """
+        try:
+            # Close expired markets
+            result = await self.db.execute(
+                """UPDATE markets SET status = 'closed', updated_at = datetime('now')
+                   WHERE status = 'active'
+                     AND close_date IS NOT NULL
+                     AND close_date < datetime('now')"""
+            )
+            closed_count = result.rowcount if hasattr(result, 'rowcount') else 0
+
+            # Expire signals referencing closed markets
+            signal_result = await self.db.execute(
+                """UPDATE signals SET status = 'EXPIRED'
+                   WHERE status IN ('ROUTED', 'PENDING')
+                     AND market_id IN (
+                         SELECT id FROM markets WHERE status = 'closed'
+                     )"""
+            )
+            expired_signals = signal_result.rowcount if hasattr(signal_result, 'rowcount') else 0
+
+            if closed_count > 0 or expired_signals > 0:
+                await self.db.commit()
+                # Remove closed markets from tracked set
+                closed_ids = []
+                for mid in list(self._tracked_markets.keys()):
+                    row = await self.db.fetchone(
+                        "SELECT status FROM markets WHERE id = ?", (mid,)
+                    )
+                    if row and row["status"] == "closed":
+                        closed_ids.append(mid)
+                for mid in closed_ids:
+                    self._tracked_markets.pop(mid, None)
+
+                self.logger.info(
+                    "Auto-close guard: %d markets closed, %d signals expired, "
+                    "%d removed from tracking",
+                    closed_count, expired_signals, len(closed_ids),
+                )
+        except Exception:
+            self.logger.exception("Auto-close guard failed")
 
     # ── Live Poll Priority Selection ──────────────────────────────────
 

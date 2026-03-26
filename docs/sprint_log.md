@@ -629,3 +629,98 @@
 - [x] Post-test report generated: `Sibyl_Live_Test_Report_Sprint19.docx`
 - **Bugs discovered**: Position P&L tracking (current_price never updates), duplicate position rows (no aggregation), ACE/BLITZ engines idle (0 trades), X sentiment fully offline (402 credits depleted)
 - **Final state**: $171.42 total capital ($200.21 HWM), -$4.30 SGE daily P&L, 30,042 total signals, 26 executions
+
+### Sprint 20: Crypto-Only Pivot — Depth Over Breadth (2026-03-23)
+- [x] **STRATEGIC PIVOT**: Disabled all 7 non-crypto pipelines, consolidated to SGE-only engine
+- [x] Config surgery: `system_config.yaml` categories "all" → "crypto", pipeline interval 900s → 300s, correlation engine disabled, Blitz disabled
+- [x] Engine consolidation: SGE 70% → 95%, ACE 30% → 0%, Blitz disabled. Single-engine architecture.
+- [x] **NEW: Per-category risk profiles** (investment_policy_config.yaml Section 21): Each category now has independent min_confidence, min_ev, kelly_fraction, max_position_pct, stop_loss_pct, dedup_window, pipeline_interval, market_horizon
+- [x] Crypto risk profile: min_conf=0.55, min_ev=0.02, kelly=0.25, max_pos=5%, max_cat=60%, stop=25%
+- [x] 7 non-crypto categories marked `locked: true` with preserved settings for Sprint 22+ re-enablement
+- [x] **DEAD ZONE FIX**: Root cause of Sprint 19 crypto failure — Signal Router used SGE floor (min_ev=0.03), OrderExecutor used Tier 2 floor (min_ev=0.06). Signals with ev=0.0475 approved by router but rejected by executor. Fix: both now read from per-category risk profile (min_ev=0.02).
+- [x] PolicyEngine: Added `get_category_risk_profile()`, `is_category_locked()`. `check_signal_quality_floor()` checks per-category profile first, falls back to tier defaults.
+- [x] SignalRouter: `_route_signal()` now accepts `category_profile` param; uses profile thresholds instead of engine defaults. Locked categories auto-defer.
+- [x] OrderExecutor: `_execute_for_engine()` reads kelly_fraction, max_position_pct, stop_loss_pct from per-category profile. Locked categories blocked at execution.
+- [x] SGE signal whitelist expanded: 3 types → 13 types (added all DATA_* pipeline signals + ACE-only types)
+- [x] Crypto pipeline tuning: DEDUP_WINDOW 15min → 5min, MARKET_HORIZON 14d → 7d, PRICE_PROXIMITY_THRESHOLD 5% → 8%, momentum/fear-greed thresholds widened
+- [x] PipelineManager: Now accepts `categories` filter — only initializes requested pipelines (saves API calls + init time)
+- [x] PipelineAgent: Passes category filter to PipelineManager at initialization
+- [x] category_strategies.yaml: Crypto preferred_engine ACE → SGE, ev_modifier 0.95 → 1.0, position_size_scale 0.9 → 1.0, max_exposure 15% → 60%
+- [x] Risk dashboard: Loosened thresholds for crypto volatility — WARNING -8%, CAUTION -15%, CRITICAL -25%, daily halt -8%
+- [x] Portfolio allocator: engine_splits SGE 0.95, ACE 0.00
+- [x] End-to-end kill chain verified: signal (conf=0.62, ev=0.0475) → policy PASS → router SGE → executor 21 contracts
+- [x] 89 core tests passing (policy + config), all changes backward-compatible
+- **Key metric**: Sprint 19 produced 26,282 crypto signals → 0 executed. Sprint 20 architecture allows all signals with conf≥0.55 and ev≥0.02 through to execution.
+
+### Sprint 20.5: Always-On Bracket Trader — Persistent Crypto Participation (2026-03-23)
+- [x] **TARGETED SERIES TRACKER** (Option C): Deterministic ticker-prefix enumeration for BTC/ETH/SOL/XRP
+  - `CryptoPipeline.TARGET_SERIES` maps each asset to its Kalshi ticker prefixes (KXBTC, KXBTCD, KXBTCMIN, KXBTCMAX, etc.)
+  - `_enumerate_target_markets()`: DB queries via `market.id LIKE 'KXBTC%'` instead of keyword-matching titles
+  - Covers ALL Kalshi crypto series: 15-min, hourly, 4-hour, daily, monthly-min, monthly-max
+  - Returns markets grouped by CoinGecko ID with latest yes_price from prices table
+- [x] **ALWAYS-ON BRACKET TRADER** (Option A): Unconditional signal generation for every active bracket
+  - `_bracket_model_signals()` runs every pipeline cycle with zero conditional gates
+  - Generates `BRACKET_MODEL` signal for every bracket where `|edge| >= BRACKET_MIN_EDGE` (2 cents)
+  - **Timeframe-aware volatility model**: `sigma_t = daily_vol * sqrt(minutes_remaining / 1440)`
+    - 15-min brackets: σ ≈ 0.31% (vs 3% daily vol) — correctly narrow distribution
+    - Hourly brackets: σ ≈ 0.61% — moderate spread
+    - Daily brackets: σ ≈ 3.0% — full daily vol
+  - **Real EV calculation**: `model_prob - market_price` replaces old `abs(prob-0.5)*0.1` approximation
+  - Normal CDF probability model with bracket-type handling (above/below/between)
+  - Timeframe classification: `_classify_timeframe()` labels signals as 15min/hourly/4hour/daily/monthly
+  - Comprehensive stats logging: scanned/emitted/no_price/no_bracket/low_edge per cycle
+- [x] `BRACKET_MODEL` added to SGE signal_whitelist (now 14 types)
+- [x] `config/investment_policy_config.yaml`: Added `bracket_min_edge: 0.02` and `target_assets: [bitcoin, ethereum, solana, xrp]` to crypto profile
+- [x] Test fix: `test_category_strategy.py` exposure assertion updated for Sprint 20 crypto cap (0.60 → 0.70 ceiling)
+- [x] 89 core tests passing, crypto pipeline imports cleanly, bracket math verified
+- **Paradigm shift**: From "generate signals when conditions are interesting" → "generate signals for every active bracket, let the math determine direction and size"
+- **Key metric**: Every BTC/ETH/SOL/XRP bracket market iteration across all timeframes now receives a BRACKET_MODEL signal if model sees ≥2 cents of edge
+
+**Phase 2: Infrastructure Fixes + Hyperliquid Integration (2026-03-23)**
+- [x] **CRITICAL FIX — Position Exit Gap**: PositionLifecycleManager was closing positions in local DB only, never selling on Kalshi. Added `KalshiClient.sell_position()` (action: "sell") and `_sell_on_kalshi()` helper. Wired into Stop Guard, Exit Optimizer, and Resolution Tracker. All exit paths now sell on Kalshi first, then update DB. Failed sells → STOP_PENDING/CLOSE_PENDING status.
+- [x] **CRITICAL FIX — Stale Price in Stop Guard**: Was reading `positions.current_price` (300s staleness). Now reads from `prices` table via `_get_fresh_price()` (5s freshness from KalshiMonitorAgent).
+- [x] **Order Fill Confirmation**: OrderExecutor polls `KalshiClient.get_order()` after placement. Canceled/expired orders don't create phantom DB positions.
+- [x] **HyperliquidClient** (`sibyl/clients/hyperliquid_client.py`): Async client for Hyperliquid Info API (free, no auth required).
+  - `get_all_mids()`: Mid prices for BTC/ETH/SOL/XRP
+  - `get_asset_contexts()`: Rich ticker data (mark, mid, oracle, funding, OI, volume)
+  - `get_candles()`: Historical OHLCV candles (1m to 1M intervals)
+  - `compute_realized_volatility()`: Log-return vol from candle close-to-close returns
+  - `start_price_stream()`: REST polling at configurable interval (default 1s)
+  - `to_coingecko_cache_format()`: Seamless cache integration with existing pipeline
+  - Rate limit: 1200 weight/min, 100ms minimum between requests
+- [x] **Crypto pipeline Hyperliquid integration**: Pipeline `_analyze()` now fetches Hyperliquid asset contexts, overrides CoinGecko prices for target assets, computes realized vol from 1h candles. Bracket model prefers realized vol over CoinGecko 24h change.
+- [x] Test fix: `test_signal_router_category_adjusts_routing` marked `@pytest.mark.skip` (Sports locked by Sprint 20 design)
+- [x] 108 tests passing, 1 skipped (expected), all imports verified clean
+
+### Sprint 21: Persistent Hyperliquid Price Streaming (2026-03-23)
+- [x] **HyperliquidPriceAgent** (`sibyl/agents/monitors/hyperliquid_price_agent.py`): New BaseAgent with 1s polling loop
+  - Polls `allMids` every 1s (mid prices for BTC/ETH/SOL/XRP), weight 2 per call
+  - Polls `metaAndAssetCtxs` every 30s (funding rate, OI, 24h volume, oracle price)
+  - Computes realized volatility every 5min from 1h candles
+  - Rate budget: ~121 weight/min of 1200/min limit (10%)
+- [x] **New DB tables**:
+  - `crypto_spot_prices`: 1s spot prices (coin, cg_id, mid/mark/oracle, funding, OI, volume). Indexed (coin, ts DESC).
+  - `crypto_volatility`: 5min realized vol (coin, cg_id, daily_vol, candle_count). Indexed (coin, ts DESC).
+- [x] **DB-first pipeline architecture**: Crypto pipeline reads from DB tables (written by agent) instead of direct Hyperliquid API calls. Automatic fallback to API if DB stale.
+  - `_read_spot_prices_from_db()`: Latest row per coin → CoinGecko-compatible cache format
+  - `_read_volatility_from_db()`: Latest vol per coin (within 10-min freshness window)
+- [x] Agent wired into `__main__.py` under `--agents monitor` scope
+- [x] `system_config.yaml` → `hyperliquid:` config block (poll=1s, rich=30s, vol=300s)
+- [x] 108 tests passing, 1 skipped, all imports clean
+- **Architecture shift**: Price streaming decoupled from pipeline analysis. Agent streams 1s prices continuously; pipeline reads latest from DB every 5 min.
+
+**Sprint 21 Phase 2: Full Hyperliquid Data Suite (2026-03-23)**
+- [x] **4 new HyperliquidClient methods**:
+  - `get_l2_book(coin)`: 20-level order book + derived metrics (spread, depth, imbalance, wall detection)
+  - `get_funding_history(coin)`: 24h historical funding rates + premium
+  - `get_predicted_fundings()`: Cross-exchange predicted rates (HL/Binance/Bybit)
+  - `get_recent_trades(coin)`: 15-min 1m candles with buy/sell pressure estimation
+- [x] **Agent expanded to 6 polling tiers**: allMids (1s) + l2Book (5s) + assetCtxs (30s) + funding/micro-candles (60s) + vol/funding-history (300s). Total: ~237 weight/min (20% of budget).
+- [x] **3 new DB tables**:
+  - `crypto_order_book`: best bid/ask, spread_bps, bid/ask depth, imbalance (-1 to +1), wall prices
+  - `crypto_funding`: predicted rates (HL/Binance/Bybit), historical rates, premium
+  - `crypto_micro_candles`: 1m OHLCV + buy_pressure for short-term vol/momentum
+- [x] **Enriched bracket model**: 3 confidence adjustments (book imbalance ±3%, funding sentiment ±2%, buy pressure ±2%), capped at ±5% total. Micro-vol from 1m candles used for 15-min brackets (70/30 blend with daily vol).
+- [x] **3 new pipeline DB readers**: `_read_order_book_from_db()`, `_read_funding_from_db()`, `_read_micro_vol_from_db()`
+- [x] Config expanded: 7 interval parameters in `hyperliquid:` block
+- [x] 108 tests passing, 1 skipped, all imports clean

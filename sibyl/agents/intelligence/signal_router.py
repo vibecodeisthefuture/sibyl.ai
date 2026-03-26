@@ -293,9 +293,32 @@ class SignalRouter(BaseAgent):
                 ev = raw_ev
                 cat_engine_pref = None
 
+            # ── Sprint 20: Per-category risk profile routing ──────────
+            # If the category has a risk profile, use its thresholds
+            # instead of the engine-level defaults. This eliminates the
+            # dead zone where routing approved but execution rejected.
+            cat_profile = None
+            if self._policy and self._policy.initialized:
+                cat_profile = self._policy.get_category_risk_profile(category or "")
+                if cat_profile and cat_profile.get("locked", False):
+                    # Category is locked — defer all signals
+                    await self.db.execute(
+                        """UPDATE signals
+                           SET status = 'DEFERRED', policy_tier = ?
+                           WHERE id = ?""",
+                        (policy_tier, signal_id),
+                    )
+                    deferred_count += 1
+                    self.logger.debug(
+                        "Signal #%d deferred — category '%s' is locked",
+                        signal_id, category,
+                    )
+                    continue
+
             # ── Determine routing destination ─────────────────────────
             destination = self._route_signal(
-                signal_type, confidence, ev, cat_engine_pref
+                signal_type, confidence, ev, cat_engine_pref,
+                category_profile=cat_profile,
             )
 
             # ── Update the signal in the database ─────────────────────
@@ -340,18 +363,24 @@ class SignalRouter(BaseAgent):
         confidence: float,
         ev: float,
         category_engine_pref: str | None = None,
+        category_profile: dict | None = None,
     ) -> str:
         """Determine routing destination for a signal.
 
+        Sprint 20 Enhancement: Per-category risk profiles.
+        When a category profile exists, its min_confidence/min_ev thresholds
+        are used instead of the engine-level defaults. This eliminates the
+        dead zone where routing approved (SGE floor 0.03) but execution
+        rejected (Tier 2 floor 0.06) for crypto signals.
+
         Decision logic (in priority order):
 
-        1. If signal doesn't meet ANY engine's minimum thresholds → DEFERRED.
-        2. If signal type is on SGE's whitelist AND meets SGE thresholds → SGE.
-        3. If signal type is on ACE's whitelist AND meets ACE thresholds → ACE.
-        4. If it meets BOTH engines' thresholds and is on both whitelists → BOTH.
+        1. If category profile exists, use its thresholds for SGE routing.
+        2. If signal doesn't meet ANY engine's minimum thresholds → DEFERRED.
+        3. If signal type is on SGE's whitelist AND meets thresholds → SGE.
+        4. If signal type is on ACE's whitelist AND meets ACE thresholds → ACE.
         5. COMPOSITE_HIGH_CONVICTION meeting both thresholds → always BOTH.
-        6. If it meets one engine's thresholds but isn't on its whitelist,
-           use the category's preferred engine as a tiebreaker (Sprint 9).
+        6. Category preference as tiebreaker.
         7. Final fallback: route to whichever engine has the lower threshold.
 
         Args:
@@ -360,12 +389,20 @@ class SignalRouter(BaseAgent):
             ev:                   Expected value estimate, already category-adjusted.
             category_engine_pref: Category's preferred engine ("SGE" or "ACE"),
                                   used as a tiebreaker. None = no preference.
+            category_profile:     Per-category risk profile dict (Sprint 20), or None.
 
         Returns:
             "SGE", "ACE", "BOTH", or "DEFERRED".
         """
+        # Sprint 20: Per-category thresholds override engine defaults
+        sge_min_conf = self._sge_min_confidence
+        sge_min_ev = self._sge_min_ev
+        if category_profile:
+            sge_min_conf = float(category_profile.get("min_confidence", sge_min_conf))
+            sge_min_ev = float(category_profile.get("min_ev", sge_min_ev))
+
         # Check which engines' thresholds are met
-        meets_sge = confidence >= self._sge_min_confidence and ev >= self._sge_min_ev
+        meets_sge = confidence >= sge_min_conf and ev >= sge_min_ev
         meets_ace = confidence >= self._ace_min_confidence and ev >= self._ace_min_ev
 
         # If doesn't meet any threshold → defer
@@ -396,6 +433,12 @@ class SignalRouter(BaseAgent):
         # Use category preference as tiebreaker (Sprint 9 enhancement)
         if category_engine_pref and meets_sge and meets_ace:
             return category_engine_pref
+
+        # Sprint 20: If category profile exists and meets its thresholds,
+        # route to the preferred engine even if not on whitelist
+        if category_profile and meets_sge:
+            pref = category_engine_pref or "SGE"
+            return pref
 
         # Final fallback: route to whichever threshold is met
         if meets_sge:

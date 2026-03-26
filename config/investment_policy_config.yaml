@@ -37,11 +37,11 @@ tiers:
   tier_2:
     name: "Volatile"
     description: "Momentum-driven, sentiment-sensitive, live data required"
-    engines: ["ACE"]
+    engines: ["SGE", "ACE"]           # Sprint 20: SGE now trades Tier 2 (crypto)
     default_stance: "auto_trade_with_quality_floor"
-    min_confidence: 0.65
-    min_ev: 0.06
-    min_signal_count: 20
+    min_confidence: 0.55              # Sprint 20: lowered from 0.65 for crypto
+    min_ev: 0.02                      # Sprint 20: lowered from 0.06 — eliminates dead zone
+    min_signal_count: 10              # Sprint 20: lowered from 20
     auto_entry: true
   tier_2_ingame:
     name: "In-Game"
@@ -117,8 +117,8 @@ category_engine_permissions:
     allowed: ["SGE"]
     ace_surprises_only: true
   "Crypto & Digital Assets":
-    primary: "ACE"
-    allowed: ["ACE", "SGE"]
+    primary: "SGE"                   # Sprint 20: SGE is sole engine for crypto
+    allowed: ["SGE"]
   "Science & Technology":
     primary: "SGE"
     allowed: ["SGE", "ACE"]
@@ -164,9 +164,17 @@ capital_caps:
     ace: 0.10
     combined: 0.25
   "Crypto & Digital Assets":
-    sge: 0.10
-    ace: 0.20
-    combined: 0.25
+    sge: 0.60                        # Sprint 20: crypto is the sole focus
+    ace: 0.00
+    combined: 0.60
+  "Crypto":                          # Alias — pipeline uses lowercase category name
+    sge: 0.60
+    ace: 0.00
+    combined: 0.60
+  "crypto":                          # Alias — lowercase form from category_strategies
+    sge: 0.60
+    ace: 0.00
+    combined: 0.60
   "Science & Technology":
     sge: 0.15
     ace: 0.15
@@ -367,6 +375,120 @@ approved_data_sources:
   "politics":
     - "congress"
     - "gdelt"
+
+# ── Per-Category Risk Profiles (Section 21, Sprint 20) ──────────────
+# Each category can override tier-level defaults with its own risk parameters.
+# This replaces the one-size-fits-all tier thresholds that caused the
+# Sprint 19 dead zone (routing approved at 0.03 but execution rejected at 0.06).
+#
+# When a per-category profile exists, it takes precedence over tier defaults
+# for ALL policy checks: quality floors, position sizing, stop losses, etc.
+#
+# Categories without a profile fall back to their tier's defaults.
+per_category_risk_profiles:
+  crypto:
+    min_confidence: 0.55
+    min_ev: 0.02                   # Eliminates the 0.03-0.06 dead zone
+    kelly_fraction: 0.25           # Aggressive Kelly for crypto
+    max_position_pct: 0.05         # 5% of engine capital per position
+    max_category_pct: 0.60         # 60% of engine capital in crypto total
+    stop_loss_pct: 0.25            # Exit at -25% of position value
+    circuit_breaker_drawdown_pct: 0.15  # -15% category drawdown halts trading
+    dedup_window_minutes: 5        # Fast dedup — crypto prices move every minute
+    pipeline_interval_seconds: 300 # 5-minute pipeline cycles
+    market_horizon_days: 7         # Only trade markets closing within 7 days
+    # Sprint 20.5: Always-On Bracket Trader parameters
+    bracket_min_edge: 0.02         # 2-cent minimum edge for BRACKET_MODEL signals
+    target_assets:                 # Persistent participation assets
+      - bitcoin
+      - ethereum
+      - solana
+      - xrp
+  # ── Locked categories (Sprint 20: disabled, profiles reserved for future use) ──
+  economics:
+    min_confidence: 0.60
+    min_ev: 0.03
+    kelly_fraction: 0.15
+    max_position_pct: 0.03
+    max_category_pct: 0.25
+    stop_loss_pct: 0.30
+    circuit_breaker_drawdown_pct: 0.10
+    dedup_window_minutes: 240
+    pipeline_interval_seconds: 900
+    market_horizon_days: 14
+    locked: true                   # Sprint 20: disabled until further notice
+  weather:
+    min_confidence: 0.60
+    min_ev: 0.03
+    kelly_fraction: 0.15
+    max_position_pct: 0.03
+    max_category_pct: 0.15
+    stop_loss_pct: 0.30
+    circuit_breaker_drawdown_pct: 0.10
+    dedup_window_minutes: 120
+    pipeline_interval_seconds: 900
+    market_horizon_days: 7
+    locked: true
+  sports:
+    min_confidence: 0.65
+    min_ev: 0.06
+    kelly_fraction: 0.20
+    max_position_pct: 0.04
+    max_category_pct: 0.18
+    stop_loss_pct: 0.35
+    circuit_breaker_drawdown_pct: 0.12
+    dedup_window_minutes: 30
+    pipeline_interval_seconds: 600
+    market_horizon_days: 7
+    locked: true
+  culture:
+    min_confidence: 0.65
+    min_ev: 0.06
+    kelly_fraction: 0.15
+    max_position_pct: 0.02
+    max_category_pct: 0.10
+    stop_loss_pct: 0.35
+    circuit_breaker_drawdown_pct: 0.10
+    dedup_window_minutes: 120
+    pipeline_interval_seconds: 900
+    market_horizon_days: 14
+    locked: true
+  science:
+    min_confidence: 0.60
+    min_ev: 0.04
+    kelly_fraction: 0.15
+    max_position_pct: 0.03
+    max_category_pct: 0.15
+    stop_loss_pct: 0.30
+    circuit_breaker_drawdown_pct: 0.10
+    dedup_window_minutes: 360
+    pipeline_interval_seconds: 1800
+    market_horizon_days: 14
+    locked: true
+  financial:
+    min_confidence: 0.60
+    min_ev: 0.03
+    kelly_fraction: 0.15
+    max_position_pct: 0.03
+    max_category_pct: 0.20
+    stop_loss_pct: 0.30
+    circuit_breaker_drawdown_pct: 0.10
+    dedup_window_minutes: 60
+    pipeline_interval_seconds: 900
+    market_horizon_days: 14
+    locked: true
+  geopolitics:
+    min_confidence: 0.85
+    min_ev: 0.15
+    kelly_fraction: 0.10
+    max_position_pct: 0.02
+    max_category_pct: 0.10
+    stop_loss_pct: 0.40
+    circuit_breaker_drawdown_pct: 0.08
+    dedup_window_minutes: 120
+    pipeline_interval_seconds: 1800
+    market_horizon_days: 14
+    locked: true
 
 # ── Multi-Category Market Resolution (Section 16) ────────────────────
 multi_category:

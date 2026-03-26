@@ -113,10 +113,11 @@ class PipelineManager:
     The correlation engine runs after all pipelines complete.
     """
 
-    def __init__(self, db: DatabaseManager) -> None:
+    def __init__(self, db: DatabaseManager, categories: set[str] | None = None) -> None:
         self._db = db
         self._pipelines: list[BasePipeline] = []
         self._correlation_engine: CrossCategoryCorrelationEngine | None = None
+        self._categories_filter = categories  # Sprint 20: restrict to specific categories
         self._initialized = False
 
     @property
@@ -156,7 +157,7 @@ class PipelineManager:
         Returns:
             Number of successfully initialized pipelines.
         """
-        self._pipelines = [
+        all_pipelines = [
             EconomicsPipeline(self._db),
             WeatherPipeline(self._db),
             SportsPipeline(self._db),
@@ -166,6 +167,23 @@ class PipelineManager:
             GeopoliticsPipeline(self._db),
             FinancialPipeline(self._db),
         ]
+
+        # Sprint 20: Apply category filter — only initialize requested pipelines
+        if self._categories_filter:
+            self._pipelines = [
+                p for p in all_pipelines
+                if p.PIPELINE_NAME.lower() in self._categories_filter
+            ]
+            skipped = [
+                p.PIPELINE_NAME for p in all_pipelines
+                if p.PIPELINE_NAME.lower() not in self._categories_filter
+            ]
+            if skipped:
+                logger.info(
+                    "Category filter active: skipping %s", ", ".join(skipped)
+                )
+        else:
+            self._pipelines = all_pipelines
 
         # Fire all 8 init tasks concurrently
         init_start = time.monotonic()

@@ -221,10 +221,10 @@ class OrderExecutor(BaseAgent):
     async def _execute_for_engine(self, signal: Any, engine: str) -> None:
         """Size and execute a position for a specific engine.
 
-        Sprint 10: Now applies dynamic correlation penalty based on:
-        - Number of existing open positions in the same category
-        - Category-specific base penalty from category_strategies.yaml
-        - Portfolio value scaling (larger portfolio = less penalty)
+        Sprint 10: Dynamic correlation penalty.
+        Sprint 20: Per-category risk profiles override engine-level defaults.
+        When a category has a risk profile, its kelly_fraction, max_position_pct,
+        and stop_loss_pct are used instead of the engine's risk_policy values.
         """
         risk = self._sge_risk if engine == "SGE" else self._ace_risk
         market_id = signal["market_id"]
@@ -233,15 +233,22 @@ class OrderExecutor(BaseAgent):
         sports_sub_type = signal["sports_sub_type"] if "sports_sub_type" in signal.keys() else None
         is_override = bool(signal["override_flag"]) if "override_flag" in signal.keys() else False
 
-        # ── Policy Pre-Trade Gate (Sprint 11) ─────────────────────────
-        # Run the full policy check before allowing execution.
-        # This enforces: avoidance rules, capital caps, engine permissions,
-        # Tier 3 blocks, and sports in-game sizing adjustments.
+        # ── Sprint 20: Load per-category risk profile ─────────────────
+        cat_profile = None
         if self._policy and self._policy.initialized and category:
-            # Compute current category exposure for cap check
+            cat_profile = self._policy.get_category_risk_profile(category)
+            if cat_profile and cat_profile.get("locked", False):
+                self.logger.debug(
+                    "Category '%s' is locked — skipping execution for %s",
+                    category, market_id,
+                )
+                return
+
+        # ── Policy Pre-Trade Gate (Sprint 11) ─────────────────────────
+        if self._policy and self._policy.initialized and category:
             cat_exposure = await self._get_category_exposure(engine, category)
             market_data = {"category": category, "market_id": market_id,
-                           "open_interest": 99999}  # Will be enriched later
+                           "open_interest": 99999}
             signal_data = {"confidence": confidence,
                            "ev": float(signal["ev_estimate"] or 0)}
 
@@ -278,8 +285,13 @@ class OrderExecutor(BaseAgent):
             return
 
         # ── Position Sizing (Kelly) ───────────────────────────────────
-        kelly_frac = float(risk.get("kelly_fraction", 0.15))
-        max_position_pct = float(risk.get("max_single_position_pct", 0.02))
+        # Sprint 20: Per-category profile overrides engine-level risk params
+        if cat_profile:
+            kelly_frac = float(cat_profile.get("kelly_fraction", risk.get("kelly_fraction", 0.15)))
+            max_position_pct = float(cat_profile.get("max_position_pct", risk.get("max_single_position_pct", 0.02)))
+        else:
+            kelly_frac = float(risk.get("kelly_fraction", 0.15))
+            max_position_pct = float(risk.get("max_single_position_pct", 0.02))
 
         # Get current price for the market
         price_row = await self.db.fetchone(
@@ -292,6 +304,29 @@ class OrderExecutor(BaseAgent):
         current_price = float(price_row["yes_price"])
         if current_price <= 0 or current_price >= 1.0:
             return
+
+        # Sprint 22: Read orderbook for spread-aware pricing
+        best_bid: float | None = None
+        best_ask: float | None = None
+        try:
+            book_row = await self.db.fetchone(
+                "SELECT bids, asks FROM orderbook WHERE market_id = ? "
+                "ORDER BY timestamp DESC LIMIT 1",
+                (market_id,),
+            )
+            if book_row:
+                import json
+                try:
+                    bids = json.loads(book_row["bids"]) if book_row["bids"] else []
+                    asks = json.loads(book_row["asks"]) if book_row["asks"] else []
+                    if bids:
+                        best_bid = float(bids[0].get("price", 0))
+                    if asks:
+                        best_ask = float(asks[0].get("price", 0))
+                except (json.JSONDecodeError, KeyError, IndexError):
+                    pass
+        except Exception:
+            pass
 
         # Kelly: optimal fraction of bankroll to wager
         # For binary markets: kelly = (confidence × payout - (1-confidence)) / payout
@@ -359,7 +394,31 @@ class OrderExecutor(BaseAgent):
             )
 
         side = raw_direction
-        entry_price = current_price if side == "YES" else 1.0 - current_price
+
+        # Sprint 22: Spread-aware entry pricing.
+        # Use best_ask for YES buys (cross the spread to fill), best_bid
+        # complement for NO buys.  Falls back to mid-price if orderbook
+        # data is unavailable.  This is the single biggest fill-rate fix —
+        # limit orders at mid-price sit behind the spread and never fill.
+        if side == "YES":
+            if best_ask and 0 < best_ask < 1.0:
+                entry_price = best_ask
+                self.logger.debug(
+                    "Using best_ask=%.4f for YES entry (mid=%.4f)", best_ask, current_price
+                )
+            else:
+                entry_price = current_price
+        else:
+            # For NO: we buy NO contracts.  The price we pay = 1 - yes_bid.
+            # Cross the spread by using best_bid (lower = more aggressive NO price).
+            if best_bid and 0 < best_bid < 1.0:
+                entry_price = 1.0 - best_bid
+                self.logger.debug(
+                    "Using 1-best_bid=%.4f for NO entry (mid=%.4f)", entry_price, 1.0 - current_price
+                )
+            else:
+                entry_price = 1.0 - current_price
+
         size_contracts = int(position_dollars / entry_price) if entry_price > 0 else 0
         if size_contracts < 1:
             return
@@ -421,9 +480,74 @@ class OrderExecutor(BaseAgent):
                 )
                 if result and "order" in result:
                     order_id = result["order"].get("order_id", order_id)
+                    order_status = result["order"].get("status", "unknown")
                     self.logger.info(
-                        "LIVE ORDER PLACED: %s (order_id=%s)", market_id, order_id,
+                        "LIVE ORDER PLACED: %s (order_id=%s, status=%s)",
+                        market_id, order_id, order_status,
                     )
+
+                    # Sprint 22: Robust fill confirmation with polling loop.
+                    # Poll up to 5 times (2s intervals = 10s max) to confirm fill.
+                    # If confirmation fails entirely, do NOT record the position —
+                    # prevents ghost trades (positions in DB with no Kalshi fill).
+                    import asyncio
+                    actual_fill_price: float | None = None
+                    fill_confirmed = order_status in ("executed", "filled")
+
+                    if not fill_confirmed:
+                        for attempt in range(5):
+                            await asyncio.sleep(2)
+                            try:
+                                confirm = await self._kalshi_client.get_order(order_id)
+                                if confirm and "order" in confirm:
+                                    confirmed_status = confirm["order"].get("status", "unknown")
+                                    remaining = confirm["order"].get("remaining_count", 0)
+                                    self.logger.info(
+                                        "ORDER CONFIRM [%d/5]: %s status=%s remaining=%s",
+                                        attempt + 1, order_id, confirmed_status, remaining,
+                                    )
+                                    if confirmed_status in ("executed", "filled"):
+                                        fill_confirmed = True
+                                        # Extract actual fill price from response
+                                        avg_price = confirm["order"].get("average_fill_price")
+                                        if avg_price is not None:
+                                            actual_fill_price = float(avg_price) / 100.0
+                                        break
+                                    elif confirmed_status in ("canceled", "expired"):
+                                        self.logger.error(
+                                            "ORDER REJECTED: %s was %s — not recording position",
+                                            order_id, confirmed_status,
+                                        )
+                                        return
+                                    # else: still "resting" or "pending" — keep polling
+                            except Exception as e:
+                                self.logger.warning(
+                                    "Fill confirm attempt %d/5 failed for %s: %s",
+                                    attempt + 1, order_id, e,
+                                )
+
+                    if not fill_confirmed:
+                        # After 10 seconds, order hasn't filled — cancel it
+                        self.logger.error(
+                            "ORDER NOT FILLED after 10s: %s — cancelling and aborting. "
+                            "No phantom position will be recorded.",
+                            order_id,
+                        )
+                        try:
+                            await self._kalshi_client.cancel_order(order_id)
+                            self.logger.info("Cancelled unfilled order: %s", order_id)
+                        except Exception:
+                            self.logger.warning("Could not cancel order %s", order_id)
+                        return
+
+                    # Use actual fill price if available, otherwise keep entry_price
+                    if actual_fill_price and actual_fill_price > 0:
+                        self.logger.info(
+                            "FILL PRICE: requested=%.4f actual=%.4f (slippage=%.1fbps)",
+                            entry_price, actual_fill_price,
+                            abs(actual_fill_price - entry_price) * 10000,
+                        )
+                        entry_price = actual_fill_price
                 else:
                     self.logger.error(
                         "LIVE ORDER FAILED for %s — result: %s", market_id, result,
@@ -433,8 +557,11 @@ class OrderExecutor(BaseAgent):
                 self.logger.exception("LIVE ORDER EXCEPTION for %s", market_id)
                 return  # Don't record position if order threw
 
-        # Stop loss from engine config
-        stop_loss_pct = float(risk.get("per_market_stop_loss_pct", 0.35))
+        # Stop loss from per-category profile or engine config
+        if cat_profile:
+            stop_loss_pct = float(cat_profile.get("stop_loss_pct", risk.get("per_market_stop_loss_pct", 0.35)))
+        else:
+            stop_loss_pct = float(risk.get("per_market_stop_loss_pct", 0.35))
         stop_loss = entry_price * (1.0 - stop_loss_pct)
 
         # ── Write Position ────────────────────────────────────────────
@@ -451,13 +578,15 @@ class OrderExecutor(BaseAgent):
         )
 
         # ── Write Execution ───────────────────────────────────────────
+        # Sprint 22: Record actual order_type used (not hardcoded "market")
+        exec_order_type = "paper" if self._mode == "paper" else order_type
         await self.db.execute(
             """INSERT INTO executions
                (signal_id, engine, platform, order_id, side, fill_price, size, order_type)
                VALUES (?, ?, 'kalshi', ?, 'BUY', ?, ?, ?)""",
             (
                 signal["id"], engine, order_id, entry_price,
-                float(size_contracts), "limit" if self._mode == "paper" else "market",
+                float(size_contracts), exec_order_type,
             ),
         )
 

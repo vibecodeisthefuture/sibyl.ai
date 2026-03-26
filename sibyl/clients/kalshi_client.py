@@ -412,16 +412,20 @@ class KalshiClient:
         with_nested_markets: bool = True,
         series_ticker: str | None = None,
         category: str | None = None,
+        min_close_ts: int | None = None,
     ) -> dict:
         """Fetch paginated event listing.
 
         Args:
-            limit:                Max events to return.
+            limit:                Max events to return (max 200 per Kalshi API).
             cursor:               Pagination cursor from a previous response.
-            status:               Filter by status ("open", "closed").
+            status:               Filter by status ("unopened", "open", "closed", "settled").
             with_nested_markets:  If True, include nested market data in response.
             series_ticker:        Filter by series ticker (e.g., "KXHIGHCHI").
             category:             Filter by Kalshi category (e.g., "Climate and Weather").
+            min_close_ts:         Unix timestamp — only return events with at least one
+                                  market closing after this time.  Filters out stale/expired
+                                  events at the API level, reducing payload size.
 
         Returns:
             Dict with "events" (list) and "cursor" (string or None).
@@ -437,6 +441,8 @@ class KalshiClient:
             params["series_ticker"] = series_ticker
         if category:
             params["category"] = category
+        if min_close_ts is not None:
+            params["min_close_ts"] = min_close_ts
         data = await self._get("/events", params)
         if isinstance(data, dict):
             return data
@@ -464,15 +470,27 @@ class KalshiClient:
         limit: int = 100,
         cursor: str | None = None,
         event_ticker: str | None = None,
+        series_ticker: str | None = None,
         status: str | None = None,
+        min_close_ts: int | None = None,
+        max_close_ts: int | None = None,
+        tickers: str | None = None,
     ) -> dict:
         """Fetch paginated market listing.
 
         Args:
-            limit:         Max markets to return.
-            cursor:        Pagination cursor.
-            event_ticker:  Filter by parent event.
-            status:        Filter by status ("open", "closed").
+            limit:           Max markets to return (max 1000 per Kalshi API).
+            cursor:          Pagination cursor.
+            event_ticker:    Filter by parent event.
+            series_ticker:   Filter by series ticker (e.g., "KXBTC").
+            status:          Filter by status ("unopened", "open", "paused",
+                             "closed", "settled").
+            min_close_ts:    Unix timestamp — only return markets closing after
+                             this time.  Core filter for excluding expired markets.
+            max_close_ts:    Unix timestamp — only return markets closing before
+                             this time.  Limits how far into the future to look.
+            tickers:         Comma-separated list of specific market tickers to
+                             retrieve (e.g., "KXBTC-26MAR2717-B82650,KXBTC-...").
 
         Returns:
             Dict with "markets" (list) and "cursor" (string or None).
@@ -482,8 +500,16 @@ class KalshiClient:
             params["cursor"] = cursor
         if event_ticker:
             params["event_ticker"] = event_ticker
+        if series_ticker:
+            params["series_ticker"] = series_ticker
         if status:
             params["status"] = status
+        if min_close_ts is not None:
+            params["min_close_ts"] = min_close_ts
+        if max_close_ts is not None:
+            params["max_close_ts"] = max_close_ts
+        if tickers:
+            params["tickers"] = tickers
         data = await self._get("/markets", params)
         if isinstance(data, dict):
             return data
@@ -700,6 +726,79 @@ class KalshiClient:
                 "Order placed: %s %s %d@%d¢ on %s",
                 side, order_type, size, price_cents, ticker,
             )
+            return data
+        return None
+
+    async def sell_position(
+        self,
+        ticker: str,
+        side: str,
+        size: int,
+        price_cents: int | None = None,
+        order_type: str = "market",
+    ) -> dict | None:
+        """Sell (close) an existing position on Kalshi (requires authentication).
+
+        Sprint 20.5: Critical fix — PositionLifecycleManager now calls this
+        when stop-loss, exit optimizer, or resolution tracker triggers an exit.
+        Without this, positions were only closed in the local DB but remained
+        open on the exchange.
+
+        On Kalshi, selling is done by placing an order with action="sell".
+        To exit a YES position, sell YES. To exit a NO position, sell NO.
+
+        Args:
+            ticker:      Market ticker (e.g., "KXBTCD-26MAR24-T87500-B87999").
+            side:        "yes" or "no" — which side to sell (must match held position).
+            size:        Number of contracts to sell (integer, min 1).
+            price_cents: Limit price in cents (1-99). None for market orders.
+            order_type:  "market" (default for exits) or "limit".
+
+        Returns:
+            Order response dict with "order_id", "status", etc.
+            Returns None if not authenticated or on error.
+        """
+        if not self.is_authenticated:
+            logger.warning("Cannot sell position — not authenticated")
+            return None
+
+        body: dict[str, Any] = {
+            "ticker": ticker,
+            "action": "sell",
+            "side": side.lower(),
+            "count": size,
+            "type": order_type,
+        }
+        if order_type == "limit" and price_cents is not None:
+            body["yes_price"] = price_cents if side.lower() == "yes" else None
+            body["no_price"] = price_cents if side.lower() == "no" else None
+
+        data = await self._post("/portfolio/orders", json_body=body)
+        if isinstance(data, dict):
+            logger.info(
+                "Position sold: %s %s %d contracts on %s",
+                side, order_type, size, ticker,
+            )
+            return data
+        return None
+
+    async def get_order(self, order_id: str) -> dict | None:
+        """Get order status by ID (requires authentication).
+
+        Sprint 20.5: Used for fill confirmation after placing orders.
+
+        Args:
+            order_id: The Kalshi order ID to query.
+
+        Returns:
+            Order dict with status, filled count, etc. None if not authenticated.
+        """
+        if not self.is_authenticated:
+            logger.warning("Cannot get order — not authenticated")
+            return None
+
+        data = await self._get(f"/portfolio/orders/{order_id}", auth=True)
+        if isinstance(data, dict):
             return data
         return None
 

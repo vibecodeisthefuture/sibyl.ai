@@ -43,7 +43,8 @@ class CryptoPipeline(BasePipeline):
 
     CATEGORY = "Crypto"
     PIPELINE_NAME = "crypto"
-    DEDUP_WINDOW_MINUTES = 15  # Sprint 16: crypto prices move fast
+    DEDUP_WINDOW_MINUTES = 5   # Sprint 20: 5-min dedup — crypto needs rapid signal refresh
+    MARKET_HORIZON_DAYS = 7    # Sprint 20: only trade markets closing within 7 days
 
     # Crypto keyword mappings for market matching
     # Expanded for gap-fill discovered markets (daily brackets, monthly min/max)
@@ -80,14 +81,63 @@ class CryptoPipeline(BasePipeline):
         "cardano": "cardano", "ada": "cardano",
     }
 
+    # ── Sprint 20.5: Targeted Series Tracker (Option C) ─────────────────
+    # Deterministic enumeration of the 4 core crypto assets across all
+    # Kalshi series. market_id (= Kalshi ticker) prefixes used for DB queries.
+    # Each entry maps a CoinGecko ID to a set of Kalshi ticker prefixes that
+    # cover 15-min, hourly, 4-hour, daily, monthly-min, and monthly-max series.
+    TARGET_SERIES = {
+        "bitcoin": {
+            "cg_id": "bitcoin",
+            "ticker_prefixes": [
+                "KXBTC",       # 15-min / hourly / 4h brackets
+                "KXBTCD",      # daily brackets
+                "KXBTCMIN",    # monthly minimum
+                "KXBTCMAX",    # monthly maximum
+            ],
+        },
+        "ethereum": {
+            "cg_id": "ethereum",
+            "ticker_prefixes": [
+                "KXETH",
+                "KXETHD",
+                "KXETHMIN",
+                "KXETHMAX",
+            ],
+        },
+        "solana": {
+            "cg_id": "solana",
+            "ticker_prefixes": [
+                "KXSOL",
+                "KXSOLD",
+                "KXSOLMIN",
+                "KXSOLMAX",
+            ],
+        },
+        "xrp": {
+            "cg_id": "ripple",
+            "ticker_prefixes": [
+                "KXXRP",
+                "KXXRPD",
+                "KXXRPMIN",
+                "KXXRPMAX",
+            ],
+        },
+    }
+
+    # Sprint 20.5: Minimum edge (in probability points) for BRACKET_MODEL signals.
+    # 0.02 = 2 cents of edge on Kalshi's $0–$1 contract scale.
+    BRACKET_MIN_EDGE = 0.02
+
     # Threshold constants for signal generation
-    PRICE_PROXIMITY_THRESHOLD = 0.05  # 5% distance to threshold
-    MOMENTUM_MIN_24H_CHANGE = 0.02  # 2% minimum momentum
-    EXTREME_FEAR_THRESHOLD = 20  # FGI score for extreme fear
-    EXTREME_GREED_THRESHOLD = 80  # FGI score for extreme greed
-    DOMINANCE_SHIFT_THRESHOLD = 0.01  # 1% dominance change
-    TRENDING_MOMENTUM_THRESHOLD = 0.10  # 10% 24h change
-    VOLATILITY_THRESHOLD = 0.10  # 10% 24h change for volatility signal
+    # Sprint 20: Widened thresholds to capture more crypto signals
+    PRICE_PROXIMITY_THRESHOLD = 0.08  # 8% distance to threshold (was 5%)
+    MOMENTUM_MIN_24H_CHANGE = 0.015   # 1.5% minimum momentum (was 2%)
+    EXTREME_FEAR_THRESHOLD = 25       # FGI score for extreme fear (was 20)
+    EXTREME_GREED_THRESHOLD = 75      # FGI score for extreme greed (was 80)
+    DOMINANCE_SHIFT_THRESHOLD = 0.008 # 0.8% dominance change (was 1%)
+    TRENDING_MOMENTUM_THRESHOLD = 0.08 # 8% 24h change (was 10%)
+    VOLATILITY_THRESHOLD = 0.08       # 8% 24h change for volatility signal (was 10%)
 
     def _create_clients(self) -> List:
         """
@@ -97,7 +147,22 @@ class CryptoPipeline(BasePipeline):
             List[BasePipeline]: Initialized client instances
                 - CoinGeckoClient: Real-time crypto market data
                 - FearGreedClient: Market sentiment index
+
+        Sprint 20.5: HyperliquidClient is initialized separately (not a
+        BaseDataClient subclass) and stored on self._hyperliquid for
+        enriching the coin cache with sub-second price data.
         """
+        # Initialize Hyperliquid client (separate from BaseDataClient lifecycle)
+        self._hyperliquid = None
+        try:
+            from sibyl.clients.hyperliquid_client import HyperliquidClient
+            hl = HyperliquidClient()
+            if hl.initialize():
+                self._hyperliquid = hl
+                logger.info("HyperliquidClient initialized for real-time price enrichment")
+        except Exception as e:
+            logger.warning("HyperliquidClient init failed (non-fatal): %s", e)
+
         try:
             return [CoinGeckoClient(), FearGreedClient()]
         except Exception as e:
@@ -174,6 +239,59 @@ class CryptoPipeline(BasePipeline):
                 "OK" if fgi_data_list else "FAIL",
             )
 
+            # ── Sprint 21: Read real-time prices from crypto_spot_prices table ──
+            # HyperliquidPriceAgent writes 1-second spot prices to the DB.
+            # Pipeline reads the latest row per coin — always sub-2s fresh.
+            # Falls back to direct Hyperliquid API call if agent hasn't written yet.
+            hl_enriched = False
+            try:
+                hl_db_prices = await self._read_spot_prices_from_db()
+                if hl_db_prices:
+                    for cg_id, hl_entry in hl_db_prices.items():
+                        if cg_id in self._coin_cache and hl_entry.get("price_usd", 0) > 0:
+                            existing = self._coin_cache[cg_id]
+                            existing["price_usd"] = hl_entry["price_usd"]
+                            if hl_entry.get("change_24h_pct", 0) != 0:
+                                existing["change_24h_pct"] = hl_entry["change_24h_pct"]
+                            if hl_entry.get("volume_24h", 0) > 0:
+                                existing["volume_24h"] = hl_entry["volume_24h"]
+                        elif hl_entry.get("price_usd", 0) > 0:
+                            self._coin_cache[cg_id] = hl_entry
+                    logger.info(
+                        "DB spot price enrichment: %d assets (BTC=$%s, ETH=$%s)",
+                        len(hl_db_prices),
+                        f"{hl_db_prices.get('bitcoin', {}).get('price_usd', 0):,.0f}",
+                        f"{hl_db_prices.get('ethereum', {}).get('price_usd', 0):,.0f}",
+                    )
+                    hl_enriched = True
+            except Exception as e:
+                logger.debug("DB spot price read failed (will try direct API): %s", e)
+
+            # Fallback: direct Hyperliquid API call if DB read failed
+            if not hl_enriched and self._hyperliquid:
+                try:
+                    hl_data = await self._hyperliquid.get_asset_contexts()
+                    if hl_data:
+                        hl_cache = self._hyperliquid.to_coingecko_cache_format()
+                        for cg_id, hl_entry in hl_cache.items():
+                            if cg_id in self._coin_cache and hl_entry.get("price_usd", 0) > 0:
+                                existing = self._coin_cache[cg_id]
+                                existing["price_usd"] = hl_entry["price_usd"]
+                                if hl_entry.get("change_24h_pct", 0) != 0:
+                                    existing["change_24h_pct"] = hl_entry["change_24h_pct"]
+                                if hl_entry.get("volume_24h", 0) > 0:
+                                    existing["volume_24h"] = hl_entry["volume_24h"]
+                            elif hl_entry.get("price_usd", 0) > 0:
+                                self._coin_cache[cg_id] = hl_entry
+                        logger.info(
+                            "Hyperliquid API fallback: %d assets (BTC=$%s, ETH=$%s)",
+                            len(hl_data),
+                            f"{hl_data.get('BTC', {}).get('mid_price', 0):,.0f}",
+                            f"{hl_data.get('ETH', {}).get('mid_price', 0):,.0f}",
+                        )
+                except Exception as e:
+                    logger.warning("Hyperliquid enrichment failed (non-fatal): %s", e)
+
             # ── Run all analyses from cached data (0 extra API calls) ───
             signals.extend(self._analyze_price_thresholds_cached(markets))
             signals.extend(self._analyze_daily_brackets_cached(markets))
@@ -182,6 +300,110 @@ class CryptoPipeline(BasePipeline):
             signals.extend(self._analyze_dominance_cached(markets, global_data))
             signals.extend(self._analyze_trending_cached(markets, trending_data))
             signals.extend(self._analyze_volatility_cached(markets))
+
+            # ── Sprint 21: Read realized volatility from crypto_volatility table ─
+            # HyperliquidPriceAgent computes vol every 5 min and writes to DB.
+            # Pipeline reads the latest value per coin. Falls back to direct calc.
+            self._realized_vol: Dict[str, float] = {}
+            try:
+                vol_from_db = await self._read_volatility_from_db()
+                if vol_from_db:
+                    self._realized_vol = vol_from_db
+                    logger.info(
+                        "Realized vol (from DB): %s",
+                        {k: f"{v*100:.1f}%" for k, v in self._realized_vol.items()},
+                    )
+            except Exception as e:
+                logger.debug("DB vol read failed (will try direct calc): %s", e)
+
+            # Fallback: direct candle fetch if DB had no recent vol
+            if not self._realized_vol and self._hyperliquid:
+                from sibyl.clients.hyperliquid_client import HL_TO_CG_MAP
+                for hl_sym, cg_id in HL_TO_CG_MAP.items():
+                    try:
+                        candles = await self._hyperliquid.get_candles(
+                            coin=hl_sym, interval="1h",
+                        )
+                        if candles and len(candles) >= 5:
+                            vol = self._hyperliquid.compute_realized_volatility(candles, "1h")
+                            self._realized_vol[cg_id] = vol
+                    except Exception as e:
+                        logger.debug("Vol calc failed for %s: %s", hl_sym, e)
+                if self._realized_vol:
+                    logger.info(
+                        "Realized vol (Hyperliquid API fallback): %s",
+                        {k: f"{v*100:.1f}%" for k, v in self._realized_vol.items()},
+                    )
+
+            # ── Sprint 21 Phase 2: Load order book, funding, micro-vol ─────
+            self._order_book_data: Dict[str, Dict] = {}
+            self._funding_data: Dict[str, Dict] = {}
+            self._micro_vol_data: Dict[str, Dict] = {}
+            try:
+                self._order_book_data = await self._read_order_book_from_db()
+                self._funding_data = await self._read_funding_from_db()
+                self._micro_vol_data = await self._read_micro_vol_from_db()
+                enrichment_count = sum(1 for d in [self._order_book_data, self._funding_data, self._micro_vol_data] if d)
+                if enrichment_count > 0:
+                    logger.info(
+                        "HL enrichment: book=%d funding=%d micro_vol=%d coins",
+                        len(self._order_book_data), len(self._funding_data), len(self._micro_vol_data),
+                    )
+            except Exception as e:
+                logger.debug("HL enrichment read failed (non-fatal): %s", e)
+
+            # ── Sprint 20.5: Always-On Bracket Trader ─────────────────────
+            # Enumerates ALL active BTC/ETH/SOL/XRP markets via ticker-prefix
+            # matching and generates BRACKET_MODEL signals for every bracket
+            # where the model sees edge ≥ BRACKET_MIN_EDGE.  This guarantees
+            # persistent participation regardless of conditional triggers.
+            target_markets = await self._enumerate_target_markets()
+
+            # Sprint 22: Pre-fetch Kalshi spreads for spread-adjusted EV.
+            # Loads bid-ask spread from the Kalshi orderbook table for each
+            # target market so the bracket model deducts execution costs.
+            self._kalshi_spreads: Dict[str, float] = {}
+            try:
+                all_market_ids = []
+                for mkt_list in target_markets.values():
+                    for m in mkt_list:
+                        all_market_ids.append(m.get("id", ""))
+                if all_market_ids:
+                    placeholders = ",".join("?" for _ in all_market_ids)
+                    spread_rows = await self._db.fetchall(
+                        f"""SELECT market_id, bids, asks FROM orderbook
+                            WHERE market_id IN ({placeholders})
+                            AND timestamp > datetime('now', '-5 minutes')
+                            ORDER BY timestamp DESC""",
+                        tuple(all_market_ids),
+                    )
+                    import json as _json
+                    seen = set()
+                    for row in spread_rows:
+                        mid = row["market_id"]
+                        if mid in seen:
+                            continue
+                        seen.add(mid)
+                        try:
+                            _b = _json.loads(row["bids"]) if row["bids"] else []
+                            _a = _json.loads(row["asks"]) if row["asks"] else []
+                            if _b and _a:
+                                bb = float(_b[0].get("price", 0))
+                                ba = float(_a[0].get("price", 1))
+                                if bb > 0 and ba > bb:
+                                    self._kalshi_spreads[mid] = ba - bb
+                        except Exception:
+                            pass
+                    if self._kalshi_spreads:
+                        avg_spread = sum(self._kalshi_spreads.values()) / len(self._kalshi_spreads)
+                        logger.info(
+                            "Kalshi spreads loaded: %d markets, avg=%.3f",
+                            len(self._kalshi_spreads), avg_spread,
+                        )
+            except Exception as e:
+                logger.debug("Kalshi spread pre-fetch failed (non-fatal): %s", e)
+
+            signals.extend(self._bracket_model_signals(target_markets))
 
             logger.info(
                 f"Crypto pipeline analysis complete: {len(signals)} signals generated"
@@ -489,6 +711,61 @@ class CryptoPipeline(BasePipeline):
         return None
 
     @staticmethod
+    def _parse_bracket_from_ticker(ticker: str, current_price: float):
+        """Parse bracket from Kalshi's new ticker format (Sprint 21 fix).
+
+        New Kalshi crypto tickers encode the bracket in the suffix:
+            KXBTC-26MAR2717-B82650   → between bracket at $82,650
+            KXBTC-26MAR2717-T82899.99 → above/top at $82,899.99
+
+        The last segment after the final '-' starts with:
+            'B' + value → "between" bracket (value is the lower bound, upper = lower + $500)
+            'T' + value → "above" threshold (price must be above this)
+        """
+        import re
+        if not ticker:
+            return None
+
+        # Extract last segment after final '-'
+        parts = ticker.rsplit("-", 1)
+        if len(parts) < 2:
+            return None
+
+        suffix = parts[-1]
+
+        # Match B<number> (bracket) or T<number> (top/threshold)
+        match = re.match(r'^([BT])([\d.]+)$', suffix)
+        if not match:
+            return None
+
+        bracket_code = match.group(1)
+        value = float(match.group(2))
+
+        if value <= 0:
+            return None
+
+        if bracket_code == "B":
+            # "B" = between bracket.  Kalshi brackets are typically $500 wide for BTC,
+            # $50 for ETH, $5 for SOL.  Use the ticker prefix to determine asset.
+            ticker_upper = ticker.upper()
+            if "KXBTC" in ticker_upper:
+                width = 500
+            elif "KXETH" in ticker_upper:
+                width = 50
+            elif "KXSOL" in ticker_upper:
+                width = 5
+            elif "KXXRP" in ticker_upper or "KXRP" in ticker_upper:
+                width = 0.5
+            else:
+                width = value * 0.006  # ~0.6% width as fallback
+            return ("between", value, value + width)
+        elif bracket_code == "T":
+            # "T" = top/above threshold
+            return ("above", value, None)
+
+        return None
+
+    @staticmethod
     def _normal_cdf(z: float) -> float:
         """Approximate the standard normal CDF using the error function."""
         import math
@@ -613,6 +890,514 @@ class CryptoPipeline(BasePipeline):
                         reasoning=f"Unusual 24h volatility: {coin_name.capitalize()} moved {change*100:+.1f}% ({direction_str})",
                     ))
                     break
+        return signals
+
+    # ── Sprint 20.5: Always-On Bracket Trader (Option A) ──────────────
+    # This method runs every pipeline cycle and generates a BRACKET_MODEL
+    # signal for EVERY active bracket market where the model sees edge ≥
+    # BRACKET_MIN_EDGE, regardless of momentum, sentiment, or other
+    # conditional triggers.  This guarantees persistent participation in
+    # every BTC/ETH/SOL/XRP market iteration across all timeframes.
+
+    # ── Sprint 21: DB readers for HyperliquidPriceAgent data ──────────
+
+    async def _read_spot_prices_from_db(self) -> Dict[str, Dict]:
+        """Read the latest crypto spot prices from crypto_spot_prices table.
+
+        Returns a dict keyed by CoinGecko ID (e.g., 'bitcoin') with price_usd,
+        change_24h_pct, volume_24h — same format as CoinGecko cache entries.
+        Returns empty dict if table doesn't exist or has no recent data.
+        """
+        HL_TO_CG_LOCAL = {
+            "BTC": "bitcoin", "ETH": "ethereum", "SOL": "solana", "XRP": "ripple",
+        }
+        result: Dict[str, Dict] = {}
+
+        for hl_sym, cg_id in HL_TO_CG_LOCAL.items():
+            row = await self._db.fetchone(
+                """SELECT mid_price, mark_price, oracle_price, funding_rate,
+                          open_interest, day_volume, prev_day_price, timestamp
+                   FROM crypto_spot_prices
+                   WHERE coin = ?
+                   ORDER BY timestamp DESC LIMIT 1""",
+                (hl_sym,),
+            )
+            if not row or not row["mid_price"]:
+                continue
+
+            price = float(row["mid_price"])
+            prev_day = float(row["prev_day_price"]) if row["prev_day_price"] else 0
+            change_24h = 0.0
+            if prev_day > 0 and price > 0:
+                change_24h = (price - prev_day) / prev_day
+
+            result[cg_id] = {
+                "id": cg_id,
+                "name": cg_id,
+                "symbol": hl_sym.lower(),
+                "price_usd": price,
+                "change_24h_pct": change_24h,
+                "change_7d_pct": 0,
+                "market_cap": 0,
+                "volume_24h": float(row["day_volume"]) if row["day_volume"] else 0,
+            }
+
+        return result
+
+    async def _read_volatility_from_db(self) -> Dict[str, float]:
+        """Read the latest realized volatility per coin from crypto_volatility table.
+
+        Returns a dict keyed by CoinGecko ID → annualized daily vol (decimal).
+        Only returns values written in the last 10 minutes.
+        """
+        HL_TO_CG_LOCAL = {
+            "BTC": "bitcoin", "ETH": "ethereum", "SOL": "solana", "XRP": "ripple",
+        }
+        result: Dict[str, float] = {}
+
+        for hl_sym, cg_id in HL_TO_CG_LOCAL.items():
+            row = await self._db.fetchone(
+                """SELECT daily_vol, timestamp FROM crypto_volatility
+                   WHERE coin = ?
+                     AND timestamp > datetime('now', '-10 minutes')
+                   ORDER BY timestamp DESC LIMIT 1""",
+                (hl_sym,),
+            )
+            if row and row["daily_vol"]:
+                result[cg_id] = float(row["daily_vol"])
+
+        return result
+
+    # ── Sprint 21 Phase 2: Order Book, Funding, Micro-Vol readers ─────
+
+    async def _read_order_book_from_db(self) -> Dict[str, Dict]:
+        """Read latest order book snapshot per coin from crypto_order_book.
+
+        Returns dict keyed by CoinGecko ID → {imbalance, spread_bps,
+        bid_depth_usd, ask_depth_usd, bid_wall_count, ask_wall_count}.
+        Only returns data from last 30 seconds.
+        """
+        HL_TO_CG_LOCAL = {
+            "BTC": "bitcoin", "ETH": "ethereum", "SOL": "solana", "XRP": "ripple",
+        }
+        result: Dict[str, Dict] = {}
+
+        for hl_sym, cg_id in HL_TO_CG_LOCAL.items():
+            row = await self._db.fetchone(
+                """SELECT imbalance, spread_bps, bid_depth_usd, ask_depth_usd,
+                          bid_wall_count, ask_wall_count, bid_wall_prices, ask_wall_prices
+                   FROM crypto_order_book
+                   WHERE coin = ?
+                     AND timestamp > datetime('now', '-30 seconds')
+                   ORDER BY timestamp DESC LIMIT 1""",
+                (hl_sym,),
+            )
+            if row:
+                result[cg_id] = {
+                    "imbalance": float(row["imbalance"]) if row["imbalance"] else 0.0,
+                    "spread_bps": float(row["spread_bps"]) if row["spread_bps"] else 0.0,
+                    "bid_depth_usd": float(row["bid_depth_usd"]) if row["bid_depth_usd"] else 0.0,
+                    "ask_depth_usd": float(row["ask_depth_usd"]) if row["ask_depth_usd"] else 0.0,
+                    "bid_wall_count": int(row["bid_wall_count"]) if row["bid_wall_count"] else 0,
+                    "ask_wall_count": int(row["ask_wall_count"]) if row["ask_wall_count"] else 0,
+                    "bid_wall_prices": row["bid_wall_prices"],
+                    "ask_wall_prices": row["ask_wall_prices"],
+                }
+
+        return result
+
+    async def _read_funding_from_db(self) -> Dict[str, Dict]:
+        """Read latest predicted funding rates per coin from crypto_funding.
+
+        Returns dict keyed by CoinGecko ID → {hl_rate, binance_rate, bybit_rate,
+        avg_rate, sentiment}. Sentiment: 'bullish' if positive, 'bearish' if negative.
+        Only returns data from last 5 minutes.
+        """
+        HL_TO_CG_LOCAL = {
+            "BTC": "bitcoin", "ETH": "ethereum", "SOL": "solana", "XRP": "ripple",
+        }
+        result: Dict[str, Dict] = {}
+
+        for hl_sym, cg_id in HL_TO_CG_LOCAL.items():
+            row = await self._db.fetchone(
+                """SELECT hl_rate, binance_rate, bybit_rate
+                   FROM crypto_funding
+                   WHERE coin = ? AND source_type = 'predicted'
+                     AND timestamp > datetime('now', '-5 minutes')
+                   ORDER BY timestamp DESC LIMIT 1""",
+                (hl_sym,),
+            )
+            if row:
+                hl = float(row["hl_rate"]) if row["hl_rate"] else 0.0
+                bn = float(row["binance_rate"]) if row["binance_rate"] else 0.0
+                by = float(row["bybit_rate"]) if row["bybit_rate"] else 0.0
+                rates = [r for r in [hl, bn, by] if r != 0]
+                avg = sum(rates) / len(rates) if rates else 0.0
+
+                result[cg_id] = {
+                    "hl_rate": hl,
+                    "binance_rate": bn,
+                    "bybit_rate": by,
+                    "avg_rate": avg,
+                    "sentiment": "bullish" if avg > 0 else ("bearish" if avg < 0 else "neutral"),
+                }
+
+        return result
+
+    async def _read_micro_vol_from_db(self) -> Dict[str, Dict]:
+        """Read latest 1-minute candle stats per coin from crypto_micro_candles.
+
+        Returns dict keyed by CoinGecko ID → {micro_vol, avg_buy_pressure,
+        price_velocity, candle_count}. micro_vol is stdev of 1m returns
+        (useful for 15-min bracket vol scaling). Only reads last 15 minutes.
+        """
+        import math
+        HL_TO_CG_LOCAL = {
+            "BTC": "bitcoin", "ETH": "ethereum", "SOL": "solana", "XRP": "ripple",
+        }
+        result: Dict[str, Dict] = {}
+
+        for hl_sym, cg_id in HL_TO_CG_LOCAL.items():
+            rows = await self._db.fetchall(
+                """SELECT close, buy_pressure
+                   FROM crypto_micro_candles
+                   WHERE coin = ?
+                     AND timestamp > datetime('now', '-15 minutes')
+                   ORDER BY open_time ASC""",
+                (hl_sym,),
+            )
+            if not rows or len(rows) < 3:
+                continue
+
+            closes = [float(r["close"]) for r in rows if r["close"]]
+            pressures = [float(r["buy_pressure"]) for r in rows if r["buy_pressure"] is not None]
+
+            # Log returns for micro-vol
+            returns = []
+            for i in range(1, len(closes)):
+                if closes[i - 1] > 0:
+                    returns.append(math.log(closes[i] / closes[i - 1]))
+
+            if len(returns) < 2:
+                continue
+
+            mean_ret = sum(returns) / len(returns)
+            variance = sum((r - mean_ret) ** 2 for r in returns) / (len(returns) - 1)
+            micro_vol = math.sqrt(variance)
+
+            # Price velocity: average return direction (positive = rising)
+            velocity = mean_ret * len(returns)  # net move over period
+
+            avg_pressure = sum(pressures) / len(pressures) if pressures else 0.5
+
+            result[cg_id] = {
+                "micro_vol": micro_vol,
+                "micro_vol_daily": micro_vol * math.sqrt(1440),  # annualize 1m to daily
+                "avg_buy_pressure": avg_pressure,
+                "price_velocity": velocity,
+                "candle_count": len(closes),
+            }
+
+        return result
+
+    async def _enumerate_target_markets(self) -> Dict[str, List[Dict]]:
+        """Enumerate all active markets for the 4 target crypto assets.
+
+        Uses deterministic ticker-prefix matching (Option C) instead of
+        keyword search on titles.  Groups results by CoinGecko ID.
+
+        Returns:
+            Dict mapping cg_id → list of market dicts with id, title,
+            close_date, and latest yes_price from the prices table.
+        """
+        result: Dict[str, List[Dict]] = {}
+
+        for asset_name, spec in self.TARGET_SERIES.items():
+            cg_id = spec["cg_id"]
+            asset_markets = []
+
+            for prefix in spec["ticker_prefixes"]:
+                rows = await self._db.fetchall(
+                    """SELECT m.id, m.title, m.close_date, m.category,
+                              (SELECT p.yes_price FROM prices p
+                               WHERE p.market_id = m.id
+                               ORDER BY p.timestamp DESC LIMIT 1) AS yes_price
+                       FROM markets m
+                       WHERE m.status = 'active'
+                         AND m.platform = 'kalshi'
+                         AND m.id LIKE ? || '%'
+                         AND m.close_date <= datetime('now', '+{days} days')
+                       ORDER BY m.close_date ASC""".format(
+                        days=self.MARKET_HORIZON_DAYS
+                    ),
+                    (prefix,),
+                )
+                for row in rows:
+                    asset_markets.append(dict(row))
+
+            # Deduplicate by market id (some tickers match multiple prefixes)
+            seen = set()
+            unique = []
+            for m in asset_markets:
+                if m["id"] not in seen:
+                    seen.add(m["id"])
+                    unique.append(m)
+
+            result[cg_id] = unique
+
+        total = sum(len(v) for v in result.values())
+        logger.info(
+            "Series tracker: %d target markets (BTC=%d, ETH=%d, SOL=%d, XRP=%d)",
+            total,
+            len(result.get("bitcoin", [])),
+            len(result.get("ethereum", [])),
+            len(result.get("solana", [])),
+            len(result.get("ripple", [])),
+        )
+        return result
+
+    def _estimate_minutes_remaining(self, market: Dict) -> float:
+        """Estimate minutes until market closes from its close_date field.
+
+        Returns a floor of 1.0 to avoid division by zero.
+        """
+        close_str = market.get("close_date", "")
+        if not close_str:
+            # Default to 1 day if close_date missing
+            return 1440.0
+
+        try:
+            from datetime import timezone
+            close_dt = datetime.fromisoformat(close_str.replace("Z", "+00:00"))
+            now = datetime.now(timezone.utc)
+            delta = (close_dt - now).total_seconds() / 60.0
+            return max(delta, 1.0)
+        except Exception:
+            return 1440.0
+
+    def _classify_timeframe(self, minutes_remaining: float) -> str:
+        """Classify a market into a human-readable timeframe bucket."""
+        if minutes_remaining <= 20:
+            return "15min"
+        elif minutes_remaining <= 75:
+            return "hourly"
+        elif minutes_remaining <= 300:
+            return "4hour"
+        elif minutes_remaining <= 1500:
+            return "daily"
+        else:
+            return "monthly"
+
+    def _bracket_model_signals(
+        self, target_markets: Dict[str, List[Dict]]
+    ) -> List[PipelineSignal]:
+        """Generate BRACKET_MODEL signals for every target market with edge.
+
+        For each market:
+        1. Look up current price + 24h vol from the coin cache.
+        2. Compute time-scaled volatility: σ_t = daily_vol × √(mins_left / 1440).
+        3. Parse the bracket from the title.
+        4. Compute model probability using normal CDF with σ_t.
+        5. Compare model probability vs. market YES price → compute real EV.
+        6. If |edge| ≥ BRACKET_MIN_EDGE, emit a BRACKET_MODEL signal.
+
+        This runs unconditionally — no momentum, sentiment, or other gates.
+        """
+        import math
+        signals = []
+        stats = {"scanned": 0, "no_price": 0, "no_bracket": 0, "low_edge": 0, "emitted": 0}
+
+        for cg_id, markets in target_markets.items():
+            cached = self._coin_cache.get(cg_id)
+            if not cached:
+                logger.debug("Bracket model: no cache for %s", cg_id)
+                continue
+
+            spot_price = cached["price_usd"]
+            if spot_price <= 0:
+                continue
+
+            # Sprint 21: Multi-source volatility — prefer micro-vol for short
+            # timeframes, realized vol for longer, CoinGecko as last resort.
+            realized = getattr(self, "_realized_vol", {})
+            micro = getattr(self, "_micro_vol_data", {})
+            if cg_id in realized:
+                daily_vol = realized[cg_id]
+            else:
+                daily_vol = abs(cached["change_24h_pct"])
+
+            # Floor daily vol at 1.5% to avoid degenerate σ near zero
+            daily_vol = max(daily_vol, 0.015)
+
+            # Sprint 21 Phase 2: Enrichment data for this coin
+            book_data = getattr(self, "_order_book_data", {}).get(cg_id, {})
+            funding_data = getattr(self, "_funding_data", {}).get(cg_id, {})
+            micro_data = micro.get(cg_id, {})
+
+            for market in markets:
+                stats["scanned"] += 1
+                title = market.get("title", "")
+                market_yes_price = market.get("yes_price")
+
+                # Need a market price to compute edge
+                if market_yes_price is None or market_yes_price <= 0 or market_yes_price >= 1.0:
+                    stats["no_price"] += 1
+                    continue
+
+                # Parse bracket — try title first, then fall back to ticker
+                bracket = self._parse_crypto_bracket(title, spot_price)
+                if not bracket:
+                    bracket = self._parse_bracket_from_ticker(market.get("id", ""), spot_price)
+                if not bracket:
+                    stats["no_bracket"] += 1
+                    continue
+
+                bracket_type, lower, upper = bracket
+
+                # Time-scaled volatility
+                mins_left = self._estimate_minutes_remaining(market)
+                timeframe = self._classify_timeframe(mins_left)
+
+                # Sprint 21: For short timeframes (≤20min), prefer micro-vol
+                # from 1m candles — captures recent regime better than 1h vol.
+                effective_vol = daily_vol
+                if timeframe == "15min" and micro_data.get("micro_vol_daily"):
+                    micro_daily = micro_data["micro_vol_daily"]
+                    # Blend: 70% micro-vol + 30% daily (micro dominates short term)
+                    effective_vol = micro_daily * 0.7 + daily_vol * 0.3
+                    effective_vol = max(effective_vol, 0.015)
+
+                sigma_t = effective_vol * math.sqrt(mins_left / 1440.0)
+                # Floor sigma_t to avoid near-zero for very short durations
+                sigma_t = max(sigma_t, 0.003)
+
+                # Compute model probability
+                if bracket_type == "above" and lower is not None:
+                    z = (lower - spot_price) / (spot_price * sigma_t)
+                    model_prob = 1.0 - self._normal_cdf(z)
+                elif bracket_type == "below" and upper is not None:
+                    z = (upper - spot_price) / (spot_price * sigma_t)
+                    model_prob = self._normal_cdf(z)
+                elif bracket_type == "between" and lower is not None and upper is not None:
+                    z_low = (lower - spot_price) / (spot_price * sigma_t)
+                    z_high = (upper - spot_price) / (spot_price * sigma_t)
+                    model_prob = self._normal_cdf(z_high) - self._normal_cdf(z_low)
+                else:
+                    stats["no_bracket"] += 1
+                    continue
+
+                model_prob = max(0.01, min(0.99, model_prob))
+
+                # Sprint 22: Compute edge with spread deduction.
+                # Kalshi crypto brackets often have wide spreads or zero
+                # liquidity.  Deducting half-spread from edge prevents
+                # phantom edge signals where the spread eats the profit.
+                # Use pre-fetched Kalshi spread data (loaded in _kalshi_spreads).
+                market_id = market.get("id", "")
+                kalshi_spread = self._kalshi_spreads.get(market_id, 0.04)
+                half_spread = kalshi_spread / 2.0
+
+                edge_yes = model_prob - market_yes_price - half_spread
+                edge_no = (1.0 - model_prob) - (1.0 - market_yes_price) - half_spread
+
+                if edge_yes >= edge_no:
+                    edge = edge_yes
+                    direction = "YES"
+                else:
+                    edge = edge_no
+                    direction = "NO"
+
+                if edge < self.BRACKET_MIN_EDGE:
+                    stats["low_edge"] += 1
+                    continue
+
+                # ── Sprint 21 Phase 2: Enriched confidence ────────────────
+                # Base confidence scales with edge magnitude
+                confidence = min(0.55 + edge * 2.5, 0.95)
+
+                # Adjustment 1: Order book imbalance confirms direction
+                # If we're betting YES (price goes up) and book is bid-heavy → boost
+                # If we're betting NO (price goes down) and book is ask-heavy → boost
+                book_adj = 0.0
+                imbalance = book_data.get("imbalance", 0)
+                if imbalance != 0:
+                    if direction == "YES" and bracket_type == "above" and imbalance > 0:
+                        book_adj = min(imbalance * 0.05, 0.03)  # up to +3%
+                    elif direction == "NO" and bracket_type == "below" and imbalance < 0:
+                        book_adj = min(abs(imbalance) * 0.05, 0.03)
+                    elif direction == "YES" and bracket_type == "above" and imbalance < -0.3:
+                        book_adj = -0.02  # Strong sell wall contradicts our bet
+                    elif direction == "NO" and bracket_type == "below" and imbalance > 0.3:
+                        book_adj = -0.02
+
+                # Adjustment 2: Funding rate sentiment confirms direction
+                # Positive funding = longs paying shorts = bullish consensus
+                funding_adj = 0.0
+                avg_funding = funding_data.get("avg_rate", 0)
+                if avg_funding != 0:
+                    if direction == "YES" and bracket_type == "above" and avg_funding > 0:
+                        funding_adj = min(abs(avg_funding) * 100, 0.02)  # up to +2%
+                    elif direction == "NO" and bracket_type == "below" and avg_funding < 0:
+                        funding_adj = min(abs(avg_funding) * 100, 0.02)
+                    elif direction == "YES" and bracket_type == "above" and avg_funding < -0.0001:
+                        funding_adj = -0.01  # Bearish funding contradicts bullish bet
+                    elif direction == "NO" and bracket_type == "below" and avg_funding > 0.0001:
+                        funding_adj = -0.01
+
+                # Adjustment 3: Buy pressure from micro-candles confirms momentum
+                pressure_adj = 0.0
+                buy_pressure = micro_data.get("avg_buy_pressure", 0.5)
+                if buy_pressure != 0.5:
+                    if direction == "YES" and bracket_type == "above" and buy_pressure > 0.6:
+                        pressure_adj = min((buy_pressure - 0.5) * 0.06, 0.02)
+                    elif direction == "NO" and bracket_type == "below" and buy_pressure < 0.4:
+                        pressure_adj = min((0.5 - buy_pressure) * 0.06, 0.02)
+
+                # Apply adjustments (capped total ±5% swing)
+                total_adj = max(-0.05, min(0.05, book_adj + funding_adj + pressure_adj))
+                confidence = max(0.50, min(0.95, confidence + total_adj))
+
+                # Real EV: edge itself is the EV (probability points of mispricing)
+                ev_estimate = edge
+
+                coin_label = cg_id.capitalize()
+                if cg_id == "ripple":
+                    coin_label = "XRP"
+
+                # Build enrichment tag for reasoning
+                enrich_parts = []
+                if book_adj != 0:
+                    enrich_parts.append(f"book={imbalance:+.2f}/{book_adj:+.1%}")
+                if funding_adj != 0:
+                    enrich_parts.append(f"fund={avg_funding:+.4%}/{funding_adj:+.1%}")
+                if pressure_adj != 0:
+                    enrich_parts.append(f"pres={buy_pressure:.0%}/{pressure_adj:+.1%}")
+                enrich_str = f" | {' '.join(enrich_parts)}" if enrich_parts else ""
+
+                signals.append(PipelineSignal(
+                    market_id=market["id"],
+                    signal_type="BRACKET_MODEL",
+                    confidence=round(confidence, 4),
+                    ev_estimate=round(ev_estimate, 4),
+                    direction=direction,
+                    reasoning=(
+                        f"[{timeframe}] {coin_label} ${spot_price:,.0f} | "
+                        f"bracket {bracket_type} "
+                        f"{'$'+f'{lower:,.0f}' if lower else ''}"
+                        f"{'-$'+f'{upper:,.0f}' if upper and bracket_type == 'between' else ''} | "
+                        f"model={model_prob:.1%} mkt={market_yes_price:.1%} "
+                        f"edge={edge:+.1%} σ_t={sigma_t:.3f} "
+                        f"({mins_left:.0f}min left)"
+                        f"{enrich_str}"
+                    ),
+                ))
+                stats["emitted"] += 1
+
+        logger.info(
+            "Bracket model: scanned=%d emitted=%d (no_price=%d no_bracket=%d low_edge=%d)",
+            stats["scanned"], stats["emitted"],
+            stats["no_price"], stats["no_bracket"], stats["low_edge"],
+        )
         return signals
 
     async def _analyze_price_thresholds(self, markets: List[Dict]) -> List[PipelineSignal]:

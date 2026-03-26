@@ -21,13 +21,13 @@ risk_dashboard:
   drawdown:
     # Drawdown levels that trigger system_state warnings.
     # Level 1: WARNING — informational, no action taken.
-    warning_threshold_pct: 0.05      # -5% from HWM
+    warning_threshold_pct: 0.08      # Sprint 20: -8% from HWM (was -5%)
 
     # Level 2: CAUTION — reduce new position sizing by 50%.
-    caution_threshold_pct: 0.10      # -10% from HWM
+    caution_threshold_pct: 0.15      # Sprint 20: -15% from HWM (was -10%)
 
     # Level 3: CRITICAL — halt all new positions, close losers.
-    critical_threshold_pct: 0.20     # -20% from HWM
+    critical_threshold_pct: 0.25     # Sprint 20: -25% from HWM (was -20%)
 
   # ── Daily P&L Reset ─────────────────────────────────────────────────
   # Sibyl tracks daily P&L for each engine.  At midnight UTC, the daily
@@ -39,7 +39,7 @@ risk_dashboard:
     # If an engine's daily P&L loss exceeds this percentage of its
     # total_capital, the Allocator temporarily halts that engine.
     # (Enforced by EngineStateManager, configured here for visibility.)
-    daily_loss_halt_pct: 0.06    # -6% daily loss → halt engine
+    daily_loss_halt_pct: 0.08    # Sprint 20: -8% daily loss → halt engine (was -6%)
 
   # ── Metric Snapshots ────────────────────────────────────────────────
   # The Risk Dashboard periodically writes a snapshot of all metrics

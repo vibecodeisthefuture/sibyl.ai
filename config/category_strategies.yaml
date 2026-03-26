@@ -145,15 +145,15 @@ Culture:
 # Whale movements are extremely informative.
 Crypto:
   strategy_type: "technical_momentum"
-  preferred_engine: "ACE"
+  preferred_engine: "SGE"            # Sprint 20: SGE is sole engine
   policy_tier: "tier_2"
-  confidence_modifier: 1.0
-  ev_modifier: 0.95                # Slight discount — high competition
-  max_exposure_pct: 0.15
-  sge_cap: 0.10                    # Policy Section 12
-  ace_cap: 0.20
-  combined_cap: 0.25
-  position_size_scale: 0.9
+  confidence_modifier: 1.0           # Sprint 20: no discount — crypto is the focus
+  ev_modifier: 1.0                   # Sprint 20: neutral — removed the 0.95 discount that contributed to dead zone
+  max_exposure_pct: 0.60             # Sprint 20: crypto is the only category
+  sge_cap: 0.60                      # Sprint 20: dominant allocation
+  ace_cap: 0.00                      # Sprint 20: ACE disabled
+  combined_cap: 0.60
+  position_size_scale: 1.0           # Sprint 20: full-size positions (was 0.9)
   signal_weights:
     WHALE: 1.5                     # On-chain whale activity is gold
     MOMENTUM: 1.4                  # Crypto trends hard

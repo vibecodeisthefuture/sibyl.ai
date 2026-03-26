@@ -1,13 +1,13 @@
-# Sibyl
+# Sibyl.ai
 
-> **Fully autonomous prediction market investing system for Polymarket and Kalshi.**
-> Monitors markets 24/7, discovers opportunities through multi-source intelligence, and executes positions across two parallel capital engines — without human intervention.
+> **Autonomous prediction market trading agent for Kalshi — currently focused on crypto bracket markets (BTC, ETH, SOL, XRP).**
+> Real-time price streaming via Hyperliquid, spread-aware execution, and continuous bracket pricing across 15-minute, hourly, and daily timeframes.
 
 ---
 
-Sibyl is a multi-agent autonomous trading system purpose-built for binary prediction markets. It continuously monitors [Polymarket](https://polymarket.com) and [Kalshi](https://kalshi.com) for price inefficiencies, informed trader activity, and breakout opportunities — then autonomously enters, manages, and exits positions through a **dual-engine architecture** that separates stable compounding from aggressive alpha capture.
+Sibyl is a multi-agent autonomous trading system purpose-built for binary prediction markets on [Kalshi](https://kalshi.com). It continuously prices crypto bracket markets using real-time data from [Hyperliquid](https://hyperliquid.xyz), identifies edge via a probabilistic bracket model, and autonomously enters, manages, and exits positions through a hardened execution layer.
 
-The system is designed to run 24/7 on a self-hosted Kubernetes cluster, manage its own risk exposure, and improve signal accuracy over time through a Phase 2 learning layer.
+The system runs 24/7, manages its own risk exposure through per-category risk profiles, and is designed for self-hosted deployment on a Kubernetes cluster.
 
 ---
 
@@ -19,139 +19,150 @@ The name reflects the system's core purpose: not to gamble on outcomes, but to i
 
 ---
 
-## Dual-Engine Architecture
+## Current Focus: Crypto Bracket Markets
 
-All capital is deployed through two parallel engines, each with its own risk policy, signal preferences, and execution style:
+Sibyl is currently operating in **crypto-only mode**, targeting all BTC, ETH, SOL, and XRP bracket markets on Kalshi across three timeframes:
 
-```
-Total Portfolio
-├── Stable Growth Engine (SGE)
-│   Consistent, EV-positive positions. Patient execution.
-│   Preferred signals: Arbitrage, Mean Reversion, Liquidity Vacuum
-│
-└── Alpha Capture Engine (ACE)
-    High-conviction, fast-cycle opportunities.
-    Preferred signals: Momentum, Volume Surge, Stale Market
-```
+| Timeframe | Volatility Model | Example |
+|:---|:---|:---|
+| 15-minute | σ × √(15/1440) ≈ 0.3% | BTC ±$250 brackets |
+| Hourly | σ × √(60/1440) ≈ 0.6% | ETH ±$25 brackets |
+| Daily | Full daily σ | SOL ±$2.50 brackets |
 
-A **Portfolio Allocator** sits above both engines, enforcing the 70/30 split at all times, blocking cross-engine correlated exposure, and issuing circuit breakers if either engine hits its drawdown threshold.
+**Real-time data pipeline** (Hyperliquid, free, no auth):
+- 1-second spot prices (allMids)
+- 5-second L2 order book snapshots (bid/ask depth, imbalance, wall detection)
+- 60-second micro-candles (1m OHLCV + buy pressure) and predicted funding rates
+- 300-second historical funding + hourly candles for volatility
+
+**Bracket model enrichments** (capped at ±5% total adjustment):
+- Order book imbalance (±3%)
+- Cross-exchange funding sentiment (±2%)
+- Buy pressure momentum (±2%)
+
+### Planned Expansion
+
+**Weather markets** are the next category planned for re-enablement once the crypto pipeline proves profitable in live trading. Weather has well-defined temperature/rain/snow brackets on Kalshi with established liquidity. Each category receives its own risk profile before activation.
+
+Additional categories (economics, sports, financial, culture, science) remain locked with preserved settings and can be selectively re-enabled as market conditions warrant.
 
 ---
 
-## How It Works
+## Architecture
 
 ```
-┌─────────────────────────────────────────────────────────┐
-│  🔍 Breakout Scout           External intelligence layer│
-│  Discovers new markets       News · Reddit · X · Perplexity
-└──────────────────────────┬──────────────────────────────┘
-                           │ research packets
-                           ▼
-┌─────────────────────────────────────────────────────────┐
-│  🔭 Market Intelligence      Surveillance + Reasoning   │
-│  Whale detection · Volume anomaly · Order book depth    │
-│  LLM reasoning pass → enriched signals                  │
-└──────────────────────────┬──────────────────────────────┘
-                           │ signals
-                           ▼
-              Signal Generator + Signal Router
-              ┌─────────────┴─────────────┐
-              ▼                           ▼
-         SGE (70%)                   ACE (30%)
-         Executors                   Executors
-              └─────────────┬─────────────┘
-                            │ open positions
+┌──────────────────────────────────────────────────────────────┐
+│  📡 HyperliquidPriceAgent        Real-time data streaming    │
+│  1s prices · 5s L2 book · 60s candles · 300s funding         │
+│  Writes to 5 DB tables → pipeline reads from DB              │
+└───────────────────────────┬──────────────────────────────────┘
+                            │ DB-first architecture
                             ▼
-┌─────────────────────────────────────────────────────────┐
-│  🛡️  Position Lifecycle Manager   Full position custody │
-│  Stop Guard · EV Monitor · Exit Optimizer               │
-│  Resolution Tracker · Correlation Scanner               │
-└──────────────────────────┬──────────────────────────────┘
-                           │ system state
-                           ▼
-┌─────────────────────────────────────────────────────────┐
-│  🌡️  Portfolio Health Narrator   Human oversight layer  │
-│  6-hour digest → sibyl-log.md + push notifications      │
-└─────────────────────────────────────────────────────────┘
+┌──────────────────────────────────────────────────────────────┐
+│  🔮 CryptoPipeline              Bracket model + EV engine    │
+│  Timeframe-aware vol · Spread-deducted EV · Enriched conf    │
+│  BRACKET_MODEL signals for every active market with edge     │
+└───────────────────────────┬──────────────────────────────────┘
+                            │ signals
+                            ▼
+┌──────────────────────────────────────────────────────────────┐
+│  ⚙️  SGE (Stable Growth Engine)  Signal routing + execution  │
+│  Per-category risk profiles · Kelly sizing · Spread-crossing │
+│  5-poll fill confirmation · Ghost trade prevention           │
+└───────────────────────────┬──────────────────────────────────┘
+                            │ positions
+                            ▼
+┌──────────────────────────────────────────────────────────────┐
+│  🛡️ Position Lifecycle Manager   6 sub-routines in parallel  │
+│  A: Stop Guard (5-10s loop) · B: EV Monitor                 │
+│  C: Exit Optimizer · D: Resolution Tracker                   │
+│  E: Correlation Scanner · F: Position Reconciliation (15m)   │
+└───────────────────────────┬──────────────────────────────────┘
+                            │ state
+                            ▼
+┌──────────────────────────────────────────────────────────────┐
+│  🌡️ Portfolio Health Narrator    6h digest → ntfy.sh         │
+│  Immediate alert if ≥2 active alerts                         │
+└──────────────────────────────────────────────────────────────┘
 ```
 
 ---
 
-## Agent Layer
+## Execution Hardening (Sprint 22)
 
-Sibyl's intelligence is distributed across four specialized agents that run in parallel:
+Five classes of real-money bugs fixed — informed by analysis of common prediction market bot failures:
 
-**🔭 Market Intelligence Agent** — The system's surveillance and reasoning core. Three detection modes run continuously: whale trade detection (unusually large bets), volume anomaly detection (z-score spikes above 30-day rolling baseline), and order book depth monitoring (spread expansion, liquidity walls, vacuum detection). Detection events feed an async LLM reasoning worker that assesses signal actionability, generates counter-theses, and routes enriched signals to the appropriate engine. When multiple detection modes fire on the same market simultaneously, the signal is escalated as a high-conviction composite.
-
-**🛡️ Position Lifecycle Manager** — Owns every open position from entry to close. Five sub-routines operate in parallel within a single process: a Stop Guard running on a 5–10 second hard-stop loop (isolated thread, cannot be blocked); an EV Monitor recalculating expected value on all positions continuously; an Exit Optimizer looking for EV capture, inversion, and momentum stall exit triggers; a Resolution Tracker watching convergence and late-stage opportunity windows; and a Correlation Scanner detecting when multiple positions are exposed to the same underlying real-world event.
-
-**🔍 Breakout Scout Agent** — The only agent that looks outside the currently-tracked market universe. Runs a 15-minute discovery loop across both platforms, scoring new and rapidly-emerging markets against quantitative breakout criteria (volume growth, odds velocity, listing recency, category heat). Qualifying markets receive a full multi-source research pipeline: authoritative news (NewsAPI), synthesized consensus (Perplexity sonar-pro), high-signal social (X/Twitter v2 API), and community sentiment (Reddit PRAW). Results are synthesized by an LLM into a structured public consensus packet — BULLISH, BEARISH, CONTESTED, or NEUTRAL — and injected into the Market Intelligence Agent's reasoning context.
-
-**🌡️ Portfolio Health Narrator** — The human oversight layer. Every 6 hours, generates a plain-English digest covering both engines' positions and P&L, Allocator status and active correlation blocks, Scout pipeline activity, and a one-sentence system health verdict. Pushes to a configured notification channel (ntfy.sh, Slack, or Grafana). If two or more active alerts are present, the digest fires immediately rather than waiting for the next scheduled window.
+1. **Ghost Trade Prevention** — 5-poll fill confirmation; canceled/expired orders abort cleanly
+2. **Actual Fill-Price P&L** — entry/exit prices from Kalshi fill data, not snapshots
+3. **Spread-Crossing Entries** — limit orders at `best_ask` (YES) / `1-best_bid` (NO) for immediate fills
+4. **Position Reconciliation** — 15-min sync between DB and actual Kalshi portfolio
+5. **Spread-Aware EV** — EV reduced by half-spread cost; eliminates phantom edge on wide spreads
 
 ---
 
-## Signal Types
+## Key Stats
 
-| Signal | Engine | Trigger |
-|:--|:--|:--|
-| Arbitrage | SGE | Same event priced differently across Polymarket and Kalshi |
-| Mean Reversion | SGE | Odds at extreme with declining volume |
-| Liquidity Vacuum | SGE | Wide spread + low depth near resolution |
-| Momentum | ACE | Strong directional price move with volume confirmation |
-| Volume Surge | ACE | z-score spike implying informed trader activity |
-| Stale Market | ACE | Price flat despite new real-world information |
-| High-Conviction Arb | ACE | Cross-platform spread > 8% with high liquidity |
+| Metric | Value |
+|:---|:---|
+| Sprints Completed | 22 |
+| Tests | 528 (108 core passing) |
+| Active Pipelines | 1 (crypto) — 7 locked |
+| Engine | SGE 95% capital |
+| Agents | 19 total |
+| DB Tables | 5 new (crypto_spot_prices, crypto_volatility, crypto_order_book, crypto_funding, crypto_micro_candles) |
+| Hyperliquid Rate Budget | ~237/1200 weight/min (20%) |
+| PositionLifecycleManager Sub-routines | 6 |
 
 ---
 
 ## Tech Stack
 
-| Layer          | Technology                                                                      |
-| :------------- | :------------------------------------------------------------------------------ |
-| Language       | Python                                                                          |
-| Database       | SQLite (WAL mode) — `sibyl.db`                                                  |
-| Markets        | Polymarket CLOB REST/WebSocket · Kalshi REST/WebSocket                          |
-| Intelligence   | Perplexity sonar-pro · X/Twitter v2 API · Reddit PRAW · NewsAPI                 |
-| LLM reasoning  | Claude Haiku (routine signals) · Claude Sonnet (high-conviction / whale events) |
-| Infrastructure | Kubernetes host (homelab)                                                       |
-| Monitoring     | Grafana · Prometheus · ntfy.sh                                                  |
-| Config         | YAML config files                                                               |
+| Layer | Technology |
+|:---|:---|
+| Language | Python 3.12+ |
+| Database | SQLite (WAL mode) — `sibyl.db` |
+| Markets | Kalshi REST API |
+| Real-time Data | Hyperliquid Info API (free, no auth, 1s polling) |
+| LLM Reasoning | Claude Haiku / Sonnet (Anthropic API) |
+| Infrastructure | Docker → Kubernetes (homelab) |
+| Monitoring | Grafana · Prometheus · ntfy.sh |
+| Config | YAML config files |
 
 ---
 
-## Project Status
+## Quick Start
 
-> **Phase 1 — In Design.** Architecture, agent specifications, signal framework, risk policies, and database schemas are complete. Active development begins next.
+```bash
+# Clone
+git clone https://github.com/vibecodeisthefuture/sibyl.ai.git
+cd sibyl.ai
 
-**Phase 1 goal:** All four agents live, both engines executing real positions, 30+ closed positions in the `performance` table, and 14 consecutive stable days in production.
+# Install
+pip install -e ".[dev]"
 
-**Phase 2** (post Phase 1 stability) adds three learning-layer agents:
-- **📋 Opportunity Queue Manager** — manages and re-prioritizes deferred signals by EV decay rate
-- **📐 Signal Quality Calibrator** — recalibrates confidence thresholds from resolved position outcomes (human review required before any changes are applied)
-- **🔬 Post-Mortem Agent** — structured close-analysis per position, feeding the Calibrator and building long-term signal memory
+# Configure
+cp .env.example .env
+# Edit .env with your Kalshi API key and other credentials
 
----
+# Paper mode (recommended first)
+python -m sibyl --mode paper --agents all
 
-## Future Roadmap — TradeBot Integration
-
-Sibyl is planned for eventual integration as a **subsidiary prediction market module** within TradeBot, an autonomous multi-asset algorithmic trading system running on the same homelab infrastructure. In the integrated architecture, TradeBot's Manager Agent becomes the parent orchestrator and controls the capital allocated to prediction markets. Sibyl's Portfolio Allocator operates within that allocation, preserving the 70/30 SGE/ACE split internally.
-
-Key integration points include bidirectional signal sharing (TradeBot's crypto news feeds Sibyl's ACE; Sibyl's economic event odds feed TradeBot's macro-sensitive strategies), unified circuit breaker coordination, and a shared analytics layer for cross-system performance reporting. Both systems already share the same Kubernetes cluster, VLAN, and monitoring stack.
-
-The goal is loose coupling — Sibyl runs fully standalone today, and integration signals will be optional enrichment rather than hard dependencies.
+# Live mode
+python -m sibyl --mode live --agents all
+```
 
 ---
 
 ## Documentation
 
-| Note | Contents |
-|:--|:--|
-| `sibyl-overview.md` | Full architecture, signal framework, risk policies, platform specs, database schema |
-| `sibyl-agents-graduated.md` | Detailed agent specifications — internal architecture, config stubs, I/O contracts, Phase 2 roadmap |
-| `sibyl-agent-brainstorm.md` | Full brainstorm of 20 agents across 5 layers; priority rankings; open questions |
-| `dev-pivot-sibyl-focus.md` | Development focus decision record; TradeBot pause rationale; integration vision |
+| File | Contents |
+|:---|:---|
+| `progress_summary.md` | Sprint-by-sprint development index |
+| `docs/roadmap.md` | Sprint 22+ timeline, category re-enablement strategy |
+| `docs/architecture.md` | Architectural decisions, system workflow, API costs |
+| `docs/file_registry.md` | Complete file listing by category |
+| `docs/sprint_log.md` | Full sprint history with implementation details |
 
 ---
 
-*Self-hosted · Homelab-deployed · Kubernetes*
+*Self-hosted · Homelab-deployed · Kubernetes · Crypto-first*

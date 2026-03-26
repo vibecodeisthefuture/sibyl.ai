@@ -138,6 +138,7 @@ class PolicyEngine:
         self._approved_sources: dict[str, list[str]] = {}
         self._engine_permissions: dict[str, dict] = {}
         self._blitz_exemption: dict[str, Any] = {}  # Sprint 14: Section 20
+        self._category_risk_profiles: dict[str, dict] = {}  # Sprint 20: per-category risk
         self._initialized = False
 
     @property
@@ -165,6 +166,7 @@ class PolicyEngine:
         self._approved_sources = config.get("approved_data_sources", {})
         self._engine_permissions = config.get("category_engine_permissions", {})
         self._blitz_exemption = config.get("blitz_partition_exemption", {})
+        self._category_risk_profiles = config.get("per_category_risk_profiles", {})
         self._initialized = True
 
         blitz_status = "enabled" if self._blitz_exemption.get("enabled") else "disabled"
@@ -207,6 +209,43 @@ class PolicyEngine:
         """Get the full configuration for a tier."""
         return self._tiers.get(tier.value)
 
+    # ── Per-Category Risk Profiles (Section 21, Sprint 20) ──────────────
+
+    def get_category_risk_profile(self, category: str) -> dict[str, Any] | None:
+        """Get the per-category risk profile, if one exists.
+
+        Per-category profiles override tier-level defaults for quality floors,
+        position sizing, stop losses, and other risk parameters.
+
+        Args:
+            category: Market category name (case-insensitive).
+
+        Returns:
+            Dict of risk parameters, or None if no profile exists.
+        """
+        profile = self._category_risk_profiles.get(category)
+        if profile:
+            return profile
+        # Case-insensitive fallback
+        for cat_name, p in self._category_risk_profiles.items():
+            if cat_name.lower() == category.lower():
+                return p
+        return None
+
+    def is_category_locked(self, category: str) -> bool:
+        """Check if a category is locked (disabled) per Sprint 20 pivot.
+
+        Args:
+            category: Market category name.
+
+        Returns:
+            True if the category has a risk profile with locked=True.
+        """
+        profile = self.get_category_risk_profile(category)
+        if profile:
+            return bool(profile.get("locked", False))
+        return False
+
     # ── Signal Quality Floor (Section 14) ───────────────────────────────
 
     def check_signal_quality_floor(
@@ -220,6 +259,11 @@ class PolicyEngine:
     ) -> bool:
         """Check if a signal meets the minimum quality floor for its tier.
 
+        Sprint 20: Per-category risk profiles take precedence over tier defaults.
+        If a category has a profile with min_confidence/min_ev, those are used
+        instead of the tier's thresholds. This eliminates the dead zone where
+        routing and execution had different floors.
+
         Args:
             category:             Market category.
             confidence:           Signal confidence (0.0-1.0).
@@ -231,7 +275,23 @@ class PolicyEngine:
         Returns:
             True if the signal meets the quality floor.
         """
-        # Determine which tier to use
+        # Sprint 20: Check per-category risk profile FIRST
+        profile = self.get_category_risk_profile(category)
+        if profile and not profile.get("locked", False):
+            min_conf = float(profile.get("min_confidence", 0.50))
+            min_ev = float(profile.get("min_ev", 0.01))
+            if confidence < min_conf:
+                return False
+            if ev < min_ev:
+                return False
+            # Per-category profile passed — skip tier checks
+            logger.debug(
+                "Category profile '%s': conf=%.2f >= %.2f, ev=%.3f >= %.3f → PASS",
+                category, confidence, min_conf, ev, min_ev,
+            )
+            return True
+
+        # Fallback: use tier-level thresholds
         if sports_sub_type == "IN_GAME":
             tier = Tier.TIER_2_INGAME
         else:

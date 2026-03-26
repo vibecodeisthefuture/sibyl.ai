@@ -31,6 +31,7 @@ from __future__ import annotations
 
 import asyncio
 import logging
+import time
 from typing import Any, TYPE_CHECKING
 
 if TYPE_CHECKING:
@@ -193,6 +194,9 @@ async def discover_markets(
         1. Standard pagination: get_events(with_nested_markets=True) — ~8,800 markets
         2. Gap-fill scan (optional): discover events beyond pagination window — up to ~27,000 markets
 
+    Sprint 21.5: Uses min_close_ts=now to filter out expired events/markets at
+    the API level, reducing payload size and preventing stale market accumulation.
+
     Args:
         kalshi:    Initialized KalshiClient.
         max_pages: Max pagination pages for the standard fetch.
@@ -206,6 +210,10 @@ async def discover_markets(
     all_events: list[dict] = []
     all_markets: list[dict] = []
 
+    # Sprint 21.5: Only fetch events with markets closing in the future.
+    # This is the key filter that prevents stale market accumulation.
+    now_ts = int(time.time())
+
     # ── Standard fetch: events with nested markets ─────────────────────
     cursor = None
     for page in range(max_pages):
@@ -215,6 +223,7 @@ async def discover_markets(
                 cursor=cursor,
                 status="open",
                 with_nested_markets=True,
+                min_close_ts=now_ts,
             )
         except Exception as e:
             logger.error("Failed to fetch Kalshi events (page %d): %s", page, e)
@@ -262,6 +271,7 @@ async def discover_markets(
             data = await kalshi.get_events(
                 limit=200, cursor=cursor, status="open",
                 with_nested_markets=False,
+                min_close_ts=now_ts,
             )
         except Exception as e:
             logger.warning("Gap-fill scan page %d failed: %s", page, e)
@@ -313,6 +323,7 @@ async def discover_markets(
             try:
                 mdata = await kalshi.get_markets(
                     event_ticker=eticker, limit=100, status="open",
+                    min_close_ts=now_ts,
                 )
                 return mdata.get("markets", [])
             except Exception as e:

@@ -109,8 +109,10 @@ class PipelineAgent(BaseAgent):
             self.poll_interval,
         )
 
-        # Create and initialize the PipelineManager
-        self._pipeline_manager = PipelineManager(self.db)
+        # Sprint 20: Pass category filter to PipelineManager
+        # so only requested pipelines are initialized (saves API calls + init time)
+        cat_filter = self._categories if self._categories else None
+        self._pipeline_manager = PipelineManager(self.db, categories=cat_filter)
 
         try:
             ready_count = await self._pipeline_manager.initialize()

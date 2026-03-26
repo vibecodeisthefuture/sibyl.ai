@@ -76,40 +76,67 @@
 - [x] Generate post-test analysis report with full trade log + component ranking
 - [ ] ~~After successful 24hr test → begin 30-day no-X-API baseline~~ (deferred: need data fixes first)
 
-### Sprint 20: CRYPTO-ONLY PIVOT — Depth Over Breadth (Next)
-**STRATEGIC REDIRECT: Disable all 7 non-crypto pipelines. Single engine (SGE, 95% capital). Per-category risk management. Fix data plumbing.**
+### Sprint 20: CRYPTO-ONLY PIVOT — Depth Over Breadth — PHASE 1 COMPLETE
+**STRATEGIC REDIRECT: Disabled all 7 non-crypto pipelines. Single engine (SGE, 95% capital). Per-category risk management. Dead zone eliminated.**
 
-**Root cause of Sprint 19 failure:** 26,282 crypto signals, ZERO executed. Dead zone: Signal Router approved (ev=0.0475 > SGE floor 0.03) but OrderExecutor rejected (ev=0.0475 < Tier 2 floor 0.06).
+**Root cause of Sprint 19 failure (FIXED):** 26,282 crypto signals, ZERO executed. Dead zone: Signal Router approved (ev=0.0475 > SGE floor 0.03) but OrderExecutor rejected (ev=0.0475 < Tier 2 floor 0.06). Fix: per-category risk profiles with crypto min_ev=0.02.
 
-**Phase 1: Config Surgery**
-- [ ] Disable all non-crypto pipelines (system_config.yaml categories: "crypto")
-- [ ] Disable ACE + BLITZ engines. SGE=95%, cash_reserve=5%.
-- [ ] Implement per-category risk profiles in investment_policy_config.yaml
-- [ ] Crypto profile: min_conf=0.55, min_ev=0.02, kelly=0.25, max_pos=5%, max_cat=60%, stop_loss=25%
-- [ ] Align routing/execution thresholds (no dead zone)
-- [ ] Loosen risk dashboard: circuit breaker -15%, daily loss -8%, drawdown CAUTION -15%
-- [ ] Faster cycles: dedup 5min, pipeline interval 5min, horizon 7d
+**Phase 1: Config Surgery + Code Changes — COMPLETE (2026-03-23)**
+- [x] Disable all non-crypto pipelines (system_config.yaml categories: "crypto")
+- [x] Disable ACE + BLITZ engines. SGE=95%, cash_reserve=5%.
+- [x] Implement per-category risk profiles in investment_policy_config.yaml (Section 21)
+- [x] Crypto profile: min_conf=0.55, min_ev=0.02, kelly=0.25, max_pos=5%, max_cat=60%, stop_loss=25%
+- [x] Align routing/execution thresholds (dead zone eliminated)
+- [x] Loosen risk dashboard: circuit breaker -15%, daily loss -8%, drawdown CAUTION -15%
+- [x] Faster cycles: dedup 5min, pipeline interval 5min, horizon 7d
+- [x] SGE signal whitelist expanded to 13 types (all DATA_* signals)
+- [x] PolicyEngine: per-category profile support, locked category checks
+- [x] SignalRouter: category_profile-aware routing
+- [x] OrderExecutor: per-category kelly/position/stop-loss sizing
+- [x] PipelineManager: category filter at initialization level
+- [x] End-to-end kill chain verified: signal → policy → router → executor all pass
 
-**Phase 2: Crypto Pipeline Enhancement**
-- [ ] Real-time price tracking (fix $0 P&L bug)
+**Phase 1.5: Always-On Bracket Trader (Sprint 20.5) — COMPLETE (2026-03-23)**
+- [x] Targeted series tracker: deterministic ticker-prefix enumeration for BTC/ETH/SOL/XRP
+- [x] Always-On Bracket Trader: unconditional BRACKET_MODEL signal generation for every active bracket
+- [x] Timeframe-aware volatility model: σ_t = daily_vol × √(mins_remaining / 1440)
+- [x] Real EV calculation (model_prob - market_price) replaces approximation
+- [x] BRACKET_MODEL added to SGE whitelist (14 types total)
+- [x] Paradigm shift: signals generated for every bracket, risk params control sizing not participation
+
+**Phase 1.6: Infrastructure Fixes + Hyperliquid (Sprint 20.5) — COMPLETE (2026-03-23)**
+- [x] CRITICAL: Position exit gap fixed — PositionLifecycleManager now sells on Kalshi before DB close
+- [x] CRITICAL: Stop Guard stale price fixed — reads `prices` table (5s) instead of `positions.current_price` (300s)
+- [x] Order fill confirmation — OrderExecutor verifies fills, rejects canceled/expired phantom positions
+- [x] HyperliquidClient — real-time crypto price data from Hyperliquid Info API (free, no auth)
+- [x] Crypto pipeline Hyperliquid integration — prices + realized vol override CoinGecko for bracket model
+- [x] 108 tests passing, 1 skipped
+
+**Phase 2: Crypto Pipeline Enhancement (Sprint 21) — COMPLETE (2026-03-23)**
+- [x] ~~Real-time price tracking (fix $0 P&L bug)~~ — Fixed by Hyperliquid integration + fresh price reads
+- [x] ~~Wire `start_price_stream()` into a background agent for continuous 1s Hyperliquid updates to DB~~ — HyperliquidPriceAgent (Sprint 21)
+- [x] DB-first pipeline architecture — pipeline reads from `crypto_spot_prices` + `crypto_volatility` tables, fallback to direct API
 - [ ] Position aggregation (no duplicate rows)
-- [ ] Enhanced bracket analysis (Black-Scholes-style for BTC/ETH above/below)
-- [ ] Orderbook-informed EV (use Kalshi bid/ask)
-- [ ] Multi-timeframe momentum (1h, 4h, 1d)
+- [x] ~~Enhanced bracket analysis (Black-Scholes-style for BTC/ETH above/below)~~ — Superseded by Sprint 20.5 bracket model
+- [x] ~~Orderbook-informed EV (use Kalshi bid/ask spread for better market price input)~~ — Replaced by Hyperliquid L2 book imbalance + wall detection feeding bracket model confidence
+- [x] ~~Multi-timeframe momentum (1h, 4h, 1d)~~ — Superseded by Sprint 20.5 timeframe-aware volatility
+- [x] Full Hyperliquid data suite: L2 book (5s), predicted fundings (60s), micro-candles (60s), funding history (300s)
+- [x] Enriched bracket model: book imbalance ±3%, funding sentiment ±2%, buy pressure ±2%
 
-**Phase 3: Live Validation**
+**Phase 3: Live Validation (Sprint 22)**
+- [ ] 3-hour validation test: confirm persistent BTC/ETH/SOL/XRP participation across timeframes
 - [ ] 8-hour crypto-only live test: target >50 trades, >5 markets, break-even P&L
-- [ ] Sprint 20 test report. Decision gate for 24-hour extension.
+- [ ] Sprint 22 test report. Decision gate for 24-hour extension.
 
 See: `Sprint20_Crypto_Pivot_Plan.docx` for full plan.
 
-### Sprint 21: Extended Crypto Trading & Performance Baseline
+### Sprint 22: Extended Crypto Trading & Performance Baseline
 - [ ] 24-hour crypto-only live test
 - [ ] Begin 30-day crypto performance baseline
 - [ ] Confidence calibration: retrospective Brier score on live crypto outcomes
 - [ ] Evaluate re-enabling economics pipeline (was +$4.69 in Sprint 19)
 
-### Sprint 22+: Selective Category Re-Enablement
+### Sprint 23+: Selective Category Re-Enablement
 - [ ] Re-enable economics with its own risk profile (if crypto baseline profitable)
 - [ ] Re-enable weather with its own risk profile
 - [ ] Each category gets dedicated risk profile before re-enabling

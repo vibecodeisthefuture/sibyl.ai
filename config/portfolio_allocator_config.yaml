@@ -20,8 +20,8 @@ allocator:
   # These MUST match sge_config.yaml and ace_config.yaml allocations.
   # If they diverge, the Allocator's values WIN (it's the source of truth).
   engine_splits:
-    SGE: 0.70    # 70% of total portfolio → Stable Growth Engine
-    ACE: 0.30    # 30% of total portfolio → Alpha Capture Engine
+    SGE: 0.95    # SPRINT 20: 95% of total portfolio → SGE-only crypto pivot
+    ACE: 0.00    # SPRINT 20: Disabled — all capital consolidated to SGE
 
   # ── Reserve ─────────────────────────────────────────────────────────
   # Percentage of total balance held as CASH RESERVE (never allocated).

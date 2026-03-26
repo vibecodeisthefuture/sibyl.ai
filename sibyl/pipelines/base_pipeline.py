@@ -317,18 +317,28 @@ class BasePipeline(ABC):
     def _compute_edge(
         data_implied_probability: float,
         market_price: float,
+        half_spread: float = 0.0,
     ) -> tuple[float, str, float]:
         """Compute trading edge between data-implied probability and market price.
+
+        Sprint 22: Added half_spread parameter to account for execution costs.
+        When half_spread > 0, EV is reduced by the cost of crossing the spread.
+        This prevents the model from seeing phantom edge on thin orderbooks
+        where the spread consumes the entire theoretical profit.
 
         Args:
             data_implied_probability: What the data says the probability should be (0-1).
             market_price:             Current market YES price (0-1).
+            half_spread:              Half the bid-ask spread (0-1).  For example,
+                                      if bid=0.48 ask=0.52, half_spread=0.02.
+                                      The EV is reduced by this amount to model
+                                      the cost of crossing the spread.
 
         Returns:
             (edge_magnitude, direction, ev_estimate)
             - edge_magnitude: absolute size of the edge (0-1)
             - direction: "YES" if data says underpriced, "NO" if overpriced
-            - ev_estimate: expected value of the trade
+            - ev_estimate: expected value of the trade, net of spread cost
         """
         edge = data_implied_probability - market_price
 
@@ -336,12 +346,14 @@ class BasePipeline(ABC):
             # Data says YES is underpriced → buy YES
             direction = "YES"
             # EV: buy at market_price, expected payoff = data_implied_prob
-            ev = data_implied_probability - market_price
+            # Sprint 22: Subtract half-spread — actual fill is at ask, not mid
+            ev = data_implied_probability - market_price - half_spread
         else:
             # Data says YES is overpriced → buy NO
             direction = "NO"
             # EV: buy NO at (1-market_price), expected payoff = (1-data_implied_prob)
-            ev = (1.0 - data_implied_probability) - (1.0 - market_price)
+            # Sprint 22: Subtract half-spread — actual fill is at bid, not mid
+            ev = (1.0 - data_implied_probability) - (1.0 - market_price) - half_spread
 
         edge_magnitude = abs(edge)
         return edge_magnitude, direction, ev

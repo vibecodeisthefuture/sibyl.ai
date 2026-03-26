@@ -1,26 +1,46 @@
 # ─── Stable Growth Engine (SGE) Configuration ───
-# 70% of portfolio capital — conservative, diversified, patient execution
+# SPRINT 20: Crypto-only pivot. SGE is now the SOLE engine with 95% of capital.
+# Risk parameters tuned for crypto market characteristics:
+#   - Higher Kelly (0.25) for aggressive crypto sizing
+#   - Lower EV floor (0.02) to eliminate the dead zone
+#   - Lower confidence floor (0.55) to capture more crypto signals
+#   - Wider position limits (5%) since we're single-category
+#   - Wider stop loss (25%) — crypto brackets are volatile
 
 engine:
   name: "SGE"
-  capital_allocation_pct: 0.70
+  capital_allocation_pct: 0.95     # Sprint 20: sole engine, 95% of portfolio
 
 risk_policy:
-  active_policy: "MODERATE"        # CONSERVATIVE | MODERATE
-  kelly_fraction: 0.15
-  min_ev_threshold: 0.03           # +3%
-  min_confidence: 0.60
-  max_single_position_pct: 0.02    # 2% of engine capital
-  max_platform_exposure_pct: 0.25  # 25% of engine capital
-  max_total_exposure_pct: 0.55     # 55% of engine capital
-  circuit_breaker_drawdown_pct: 0.10   # -10% engine drawdown
-  daily_loss_limit_pct: 0.04       # -4% of engine capital
-  per_market_stop_loss_pct: 0.35   # exit at -35% of position value
+  active_policy: "CRYPTO_FOCUSED"  # Sprint 20: tuned for crypto-only trading
+  kelly_fraction: 0.25             # Aggressive Kelly for crypto (was 0.15)
+  min_ev_threshold: 0.02           # +2% floor — eliminates dead zone (was 0.03)
+  min_confidence: 0.55             # Lower floor to capture more crypto signals (was 0.60)
+  max_single_position_pct: 0.05   # 5% of engine capital per position (was 2%)
+  max_platform_exposure_pct: 0.60  # 60% of engine capital on Kalshi (was 25%)
+  max_total_exposure_pct: 0.70     # 70% of engine capital total (was 55%)
+  circuit_breaker_drawdown_pct: 0.15   # -15% engine drawdown (was -10%)
+  daily_loss_limit_pct: 0.08       # -8% of engine capital (was -4%)
+  per_market_stop_loss_pct: 0.25   # exit at -25% of position value (was -35%)
 
+# Sprint 20: Expanded whitelist to accept ALL pipeline signal types.
+# The old whitelist (ARBITRAGE, MEAN_REVERSION, LIQUIDITY_VACUUM) blocked
+# every pipeline-generated signal (DATA_FUNDAMENTAL, DATA_MOMENTUM, etc.)
 signal_whitelist:
   - ARBITRAGE
   - MEAN_REVERSION
   - LIQUIDITY_VACUUM
+  - DATA_FUNDAMENTAL
+  - DATA_SENTIMENT
+  - DATA_MOMENTUM
+  - DATA_DIVERGENCE
+  - DATA_CATALYST
+  - COMPOSITE_HIGH_CONVICTION
+  - MOMENTUM
+  - VOLUME_SURGE
+  - STALE_MARKET
+  - HIGH_CONVICTION_ARB
+  - BRACKET_MODEL              # Sprint 20.5: Always-On Bracket Trader signals
 
 execution:
   style: "patient"                 # patient limit orders
@@ -28,98 +48,21 @@ execution:
   order_type: "limit"
   limit_offset_bps: 50             # place limit 50bps inside spread
 
+# Sprint 20: Crypto gets dominant allocation, all others locked to 0
 category_caps:
-  politics: 0.12
-  sports: 0.20
-  crypto: 0.15
-  science_tech: 0.15
-  economics: 0.15
-  other: 0.10
+  crypto: 0.60                     # 60% cap — crypto is the sole focus
+  politics: 0.00                   # Disabled
+  sports: 0.00                     # Disabled
+  science_tech: 0.00               # Disabled
+  economics: 0.00                  # Disabled
+  weather: 0.00                    # Disabled
+  culture: 0.00                    # Disabled
+  financial: 0.00                  # Disabled
+  geopolitics: 0.00                # Disabled
+  other: 0.00                      # Disabled
 
-# ─── Blitz Partition (Sprint 14) ───────────────────────────────────────
-# "Blitzkrieg" last-second execution strategy.
-# Targets markets closing within ≤90 seconds where confidence exceeds 85%.
-# Category-agnostic — exploits near-certain outcomes across all market types.
-# Capital pool: 20% of SGE allocation (~14% of total portfolio).
-#
-# KEY PRINCIPLE: Speed over patience. Market orders for instant fill.
-# The edge is in catching markets where the outcome is effectively decided
-# but the price hasn't fully converged to 0 or 1.
+# ─── Blitz Partition ───────────────────────────────────────────────────
+# SPRINT 20: Disabled — all capital consolidated to main SGE pool.
 blitz:
-  enabled: true
-  capital_pct_of_sge: 0.20           # 20% of SGE pool reserved for Blitz
-  scanner:
-    poll_interval_seconds: 1.0        # 1-second scan cycle (speed is everything)
-    close_window_seconds: 90          # Only target markets closing in ≤90s
-    min_close_window_seconds: 5       # Skip markets closing in <5s (no fill time)
-
-  entry_criteria:
-    min_confidence: 0.85              # Must be >85% confident
-    min_ev: 0.04                      # Minimum 4% expected value
-    min_price_gap: 0.05               # Price must be ≥5¢ from terminal (0 or 1)
-    max_price_gap: 0.30               # Skip if price is >30¢ from terminal
-                                      # (too risky for near-close entry)
-
-  risk_policy:
-    kelly_fraction: 0.25              # Aggressive Kelly for high-confidence plays
-    max_single_position_pct: 0.08     # 8% of Blitz pool per trade
-    max_concurrent_positions: 5       # Max 5 Blitz positions at once
-    per_trade_stop_loss_pct: 0.50     # Wider stops — positions resolve in seconds
-    circuit_breaker_drawdown_pct: 0.15  # -15% Blitz pool drawdown
-    daily_loss_limit_pct: 0.08        # -8% of Blitz pool per day
-    max_category_concentration: 0.40  # Max 40% of Blitz pool in one category
-
-  execution:
-    order_type: "market"              # Market orders for instant fill
-    style: "aggressive"               # No patience — fill immediately or miss
-    max_slippage_cents: 3             # Reject if slippage >3¢ from expected
-
-  # ── Applicable Market Types ─────────────────────────────────────────
-  # Categories and patterns where Blitz excels (category-agnostic but
-  # these represent the highest-opportunity areas).
-  target_patterns:
-    crypto_price_windows:
-      description: "BTC/ETH/SOL price at close of 15min/1hr/4hr windows"
-      keywords: ["bitcoin", "btc", "ethereum", "eth", "solana", "sol", "crypto"]
-      category_hint: "Crypto"
-      close_window_typical: "15min-1hr"
-      edge_source: "Price momentum near close; outcome often decided 60s out"
-
-    weather_temperature:
-      description: "Will temperature in City X be above/below Y°F at close"
-      keywords: ["temperature", "degrees", "weather", "fahrenheit", "celsius"]
-      category_hint: "Weather"
-      close_window_typical: "daily close"
-      edge_source: "NWS nowcast vs market price near close; sensors confirm"
-
-    sports_final_minutes:
-      description: "Game outcome when score differential is decisive"
-      keywords: ["score", "points", "goals", "touchdown", "halftime",
-                 "quarter", "inning", "nba", "nfl", "mlb", "nhl"]
-      category_hint: "Sports"
-      close_window_typical: "in-game"
-      edge_source: "Large lead + little time = near-certain outcome"
-
-    economic_data_windows:
-      description: "Fed rate, CPI, jobs report resolution windows"
-      keywords: ["fed rate", "cpi", "inflation", "nonfarm",
-                 "unemployment", "gdp", "fomc", "bls"]
-      category_hint: "Economics"
-      close_window_typical: "post-release"
-      edge_source: "Data released but market hasn't fully priced in"
-
-    stock_price_close:
-      description: "Will stock X close above/below $Y"
-      keywords: ["stock", "share price", "market cap", "nasdaq",
-                 "s&p", "dow jones", "nyse"]
-      category_hint: "Financials"
-      close_window_typical: "market close"
-      edge_source: "Intraday price near close makes outcome near-certain"
-
-    culture_event_outcome:
-      description: "Award shows, election night calls, streaming records"
-      keywords: ["oscar", "emmy", "grammy", "award", "nomination",
-                 "premiere", "box office", "golden globe"]
-      category_hint: "Culture"
-      close_window_typical: "event-based"
-      edge_source: "Live results/leaks before market price converges"
+  enabled: false
+  capital_pct_of_sge: 0.00

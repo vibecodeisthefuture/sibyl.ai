@@ -73,19 +73,20 @@ async def verify_kalshi_auth() -> dict:
 
     client = KalshiClient(key_id=key_id, private_key_path=key_path)
 
-    # Test balance endpoint
-    balance_data = await client.get_balance()
-    balance = balance_data.get("balance", 0)
-    # Kalshi returns balance in cents
-    if isinstance(balance, (int, float)) and balance > 100:
-        balance_dollars = balance / 100.0
-    else:
-        balance_dollars = float(balance)
+    # Test balance endpoint — get_balance() returns float (dollars) or None
+    balance_dollars = await client.get_balance()
+    if balance_dollars is None:
+        raise RuntimeError("Failed to fetch balance — auth may be invalid")
 
-    # Test positions endpoint
+    # Test positions endpoint — get_positions() returns dict with market_positions list
     positions_data = await client.get_positions()
-    positions = positions_data.get("market_positions", [])
-    open_positions = [p for p in positions if p.get("total_traded", 0) > 0]
+    if isinstance(positions_data, dict):
+        positions = positions_data.get("market_positions", [])
+    elif isinstance(positions_data, list):
+        positions = positions_data
+    else:
+        positions = []
+    open_positions = [p for p in positions if isinstance(p, dict) and p.get("total_traded", 0) > 0]
 
     await client.close()
 
@@ -158,11 +159,13 @@ async def run_paper_sanity_check(duration_seconds: int = 300) -> bool:
     from sibyl.agents.scout.breakout_scout import BreakoutScout
     from sibyl.agents.narrator.narrator import Narrator
     from sibyl.agents.sentiment.x_sentiment_agent import XSentimentAgent
+    from sibyl.agents.monitors.hyperliquid_price_agent import HyperliquidPriceAgent
 
     agents = [
         PolymarketMonitorAgent(db=db, config=config.system),
         KalshiMonitorAgent(db=db, config=config.system),
         CrossPlatformSyncAgent(db=db, config=config.system),
+        HyperliquidPriceAgent(db=db, config=config.system),
         MarketIntelligenceAgent(db=db, config=config.system),
         SignalGenerator(db=db, config=config.system, intel_agent=None),
         SignalRouter(db=db, config=config.system),

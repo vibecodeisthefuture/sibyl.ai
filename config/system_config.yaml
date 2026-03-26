@@ -78,17 +78,36 @@ notifications:
 # Each pipeline fetches external data and produces signals for the SignalRouter.
 pipeline:
   enabled: true
-  run_interval_seconds: 900       # 15 minutes — how often pipelines run
-  categories: "all"               # "all" or comma-separated (e.g., "crypto,weather")
-  correlation_engine: true        # Run cross-category correlation after pipelines
-  max_signals_per_run: 100        # Safety cap to prevent signal floods
+  run_interval_seconds: 300       # 5 minutes — faster cycles for crypto focus
+  categories: "crypto"            # SPRINT 20: Crypto-only pivot. All others disabled.
+  correlation_engine: false       # Disabled — single category, no cross-correlation needed
+  max_signals_per_run: 200        # Increased — crypto is the only pipeline running
 
 # ─── Blitz Partition (Sprint 15) ───
 # Controls the BlitzScanner + BlitzExecutor, which trade markets closing in
 # ≤90 seconds with >85% confidence. Operates on SGE_BLITZ sub-engine capital.
 # Detailed Blitz config lives in sge_config.yaml → blitz section.
 blitz:
-  enabled: true                   # Master switch; false disables Blitz entirely
+  enabled: false                  # SPRINT 20: Disabled — consolidating to SGE-only
+
+# ─── Hyperliquid Real-Time Data Feed (Sprint 21) ───
+# HyperliquidPriceAgent polls Hyperliquid's free Info API for BTC/ETH/SOL/XRP.
+# 6 polling tiers writing to 5 DB tables. No authentication required.
+# Rate budget: ~237 weight/min of 1200/min limit (20% of budget).
+hyperliquid:
+  enabled: true
+  # Tier 1: allMids → crypto_spot_prices (~120 wt/min)
+  poll_interval_seconds: 1
+  # Tier 2: l2Book × 4 coins → crypto_order_book (~96 wt/min)
+  order_book_interval_seconds: 5
+  # Tier 3: metaAndAssetCtxs → crypto_spot_prices (~1 wt/min)
+  rich_data_interval_seconds: 30
+  # Tier 4: predictedFundings → crypto_funding + 1m candles → crypto_micro_candles (~18 wt/min)
+  funding_interval_seconds: 60
+  micro_candle_interval_seconds: 60
+  # Tier 5: 1h candles → crypto_volatility + fundingHistory → crypto_funding (~2 wt/min)
+  volatility_interval_seconds: 300
+  funding_history_interval_seconds: 300
 
 # Path to manually curated market watchlist
 markets_watchlist_path: "config/markets_watchlist.yaml"
