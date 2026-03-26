@@ -44,7 +44,7 @@ class CryptoPipeline(BasePipeline):
     CATEGORY = "Crypto"
     PIPELINE_NAME = "crypto"
     DEDUP_WINDOW_MINUTES = 5   # Sprint 20: 5-min dedup — crypto needs rapid signal refresh
-    MARKET_HORIZON_DAYS = 7    # Sprint 20: only trade markets closing within 7 days
+    MARKET_HORIZON_DAYS = 30   # Sprint 22: 30 days — captures monthly min/max brackets
 
     # Crypto keyword mappings for market matching
     # Expanded for gap-fill discovered markets (daily brackets, monthly min/max)
@@ -125,9 +125,9 @@ class CryptoPipeline(BasePipeline):
         },
     }
 
-    # Sprint 20.5: Minimum edge (in probability points) for BRACKET_MODEL signals.
-    # 0.02 = 2 cents of edge on Kalshi's $0–$1 contract scale.
-    BRACKET_MIN_EDGE = 0.02
+    # Sprint 22: Minimum edge (in probability points) for BRACKET_MODEL signals.
+    # Aligned with investment_policy_config.yaml bracket_min_edge: 0.015.
+    BRACKET_MIN_EDGE = 0.015
 
     # Threshold constants for signal generation
     # Sprint 20: Widened thresholds to capture more crypto signals
@@ -239,10 +239,11 @@ class CryptoPipeline(BasePipeline):
                 "OK" if fgi_data_list else "FAIL",
             )
 
-            # ── Sprint 21: Read real-time prices from crypto_spot_prices table ──
-            # HyperliquidPriceAgent writes 1-second spot prices to the DB.
-            # Pipeline reads the latest row per coin — always sub-2s fresh.
-            # Falls back to direct Hyperliquid API call if agent hasn't written yet.
+            # ── Sprint 22: Hyperliquid-first data sourcing ────────────────
+            # Priority #1: Read real-time prices from crypto_spot_prices table
+            # (HyperliquidPriceAgent writes 1-second spot prices to the DB).
+            # Priority #2: Direct Hyperliquid API call as fallback.
+            # Priority #3: CoinGecko batch data (already loaded above).
             hl_enriched = False
             try:
                 hl_db_prices = await self._read_spot_prices_from_db()
@@ -258,16 +259,16 @@ class CryptoPipeline(BasePipeline):
                         elif hl_entry.get("price_usd", 0) > 0:
                             self._coin_cache[cg_id] = hl_entry
                     logger.info(
-                        "DB spot price enrichment: %d assets (BTC=$%s, ETH=$%s)",
+                        "[P1] DB spot price enrichment: %d assets (BTC=$%s, ETH=$%s)",
                         len(hl_db_prices),
                         f"{hl_db_prices.get('bitcoin', {}).get('price_usd', 0):,.0f}",
                         f"{hl_db_prices.get('ethereum', {}).get('price_usd', 0):,.0f}",
                     )
                     hl_enriched = True
             except Exception as e:
-                logger.debug("DB spot price read failed (will try direct API): %s", e)
+                logger.debug("[P1] DB spot price read failed (will try P2 API): %s", e)
 
-            # Fallback: direct Hyperliquid API call if DB read failed
+            # Priority #2: Direct Hyperliquid API call if DB read failed
             if not hl_enriched and self._hyperliquid:
                 try:
                     hl_data = await self._hyperliquid.get_asset_contexts()
@@ -284,13 +285,17 @@ class CryptoPipeline(BasePipeline):
                             elif hl_entry.get("price_usd", 0) > 0:
                                 self._coin_cache[cg_id] = hl_entry
                         logger.info(
-                            "Hyperliquid API fallback: %d assets (BTC=$%s, ETH=$%s)",
+                            "[P2] Hyperliquid API fallback: %d assets (BTC=$%s, ETH=$%s)",
                             len(hl_data),
                             f"{hl_data.get('BTC', {}).get('mid_price', 0):,.0f}",
                             f"{hl_data.get('ETH', {}).get('mid_price', 0):,.0f}",
                         )
+                        hl_enriched = True
                 except Exception as e:
-                    logger.warning("Hyperliquid enrichment failed (non-fatal): %s", e)
+                    logger.warning("[P2] Hyperliquid API fallback failed (non-fatal): %s", e)
+
+            if not hl_enriched:
+                logger.info("[P3] Using CoinGecko data only (Hyperliquid unavailable)")
 
             # ── Run all analyses from cached data (0 extra API calls) ───
             signals.extend(self._analyze_price_thresholds_cached(markets))
@@ -1241,8 +1246,11 @@ class CryptoPipeline(BasePipeline):
 
                 # Need a market price to compute edge
                 if market_yes_price is None or market_yes_price <= 0 or market_yes_price >= 1.0:
-                    stats["no_price"] += 1
-                    continue
+                    # No Kalshi price data yet — assume fair value (0.50) as baseline.
+                    # This lets the model generate signals for newly discovered markets
+                    # before the price polling cycle catches up.
+                    market_yes_price = 0.50
+                    stats["no_price"] += 1  # Still track for diagnostics
 
                 # Parse bracket — try title first, then fall back to ticker
                 bracket = self._parse_crypto_bracket(title, spot_price)
@@ -1294,7 +1302,7 @@ class CryptoPipeline(BasePipeline):
                 # phantom edge signals where the spread eats the profit.
                 # Use pre-fetched Kalshi spread data (loaded in _kalshi_spreads).
                 market_id = market.get("id", "")
-                kalshi_spread = self._kalshi_spreads.get(market_id, 0.04)
+                kalshi_spread = self._kalshi_spreads.get(market_id, 0.01)
                 half_spread = kalshi_spread / 2.0
 
                 edge_yes = model_prob - market_yes_price - half_spread
