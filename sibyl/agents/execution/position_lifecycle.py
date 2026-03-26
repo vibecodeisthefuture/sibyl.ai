@@ -110,18 +110,16 @@ class PositionLifecycleManager(BaseAgent):
         key_path = os.environ.get("KALSHI_PRIVATE_KEY_PATH")
         if key_id and key_path:
             from sibyl.clients.kalshi_client import KalshiClient
-            rate_limit = float(
-                self.config.get("platforms", {}).get("kalshi", {}).get(
-                    "rate_limit_per_second", 8
-                )
+            tier = self.config.get("platforms", {}).get("kalshi", {}).get(
+                "tier", "basic"
             )
             self._kalshi_client = KalshiClient(
                 key_id=key_id,
                 private_key_path=key_path,
-                rate_limit=rate_limit,
+                tier=tier,
             )
             self._mode = "live"
-            self.logger.info("Kalshi client initialized for LIVE position exits")
+            self.logger.info("Kalshi client initialized for LIVE position exits (tier=%s)", tier)
         else:
             self._mode = "paper"
             self.logger.info("No Kalshi credentials — position exits are DB-only (paper mode)")

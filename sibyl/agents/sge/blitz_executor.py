@@ -142,15 +142,13 @@ class BlitzExecutor(BaseAgent):
             key_id = os.environ.get("KALSHI_KEY_ID")
             key_path = os.environ.get("KALSHI_PRIVATE_KEY_PATH")
             if key_id and key_path:
-                rate_limit = float(
-                    self.config.get("platforms", {}).get("kalshi", {}).get(
-                        "rate_limit_per_second", 8
-                    )
+                tier = self.config.get("platforms", {}).get("kalshi", {}).get(
+                    "tier", "basic"
                 )
                 self._kalshi_client = KalshiClient(
                     key_id=key_id,
                     private_key_path=key_path,
-                    rate_limit=rate_limit,
+                    tier=tier,
                 )
 
         self.logger.info(

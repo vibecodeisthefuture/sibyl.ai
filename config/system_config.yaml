@@ -28,27 +28,27 @@ database:
 # RATE LIMIT BUDGET:
 #   Polymarket: 900 req/10s general (90/s), price/book endpoints 150/s
 #               → We set rate limiter to 80 req/s (90% headroom)
-#   Kalshi:     Basic tier ~10 req/s
-#               → We set rate limiter to 8 req/s (80% headroom)
+#   Kalshi:     Advanced tier = 30 read/s, 30 write/s
+#               → We set rate limiter to use tiered limits with 90% headroom
 #
 # FORMULA: interval = num_tracked_markets × calls_per_market / rate_limit
-#   With 50 tracked markets and 3 calls/market (price, book, trades):
-#     Polymarket: 50 × 3 / 80 = ~1.9s per full scan
-#     Kalshi:     50 × 3 / 8  = ~18.8s per full scan
+#   With 120 tracked markets and 3 calls/market (price, book, trades):
+#     Polymarket: 120 × 3 / 80 = ~4.5s per full scan
+#     Kalshi:     120 × 3 / 27 = ~13.3s per full scan (much better than ~45s on Basic)
 #
 # We set the poll_interval to the SLOWER platform (Kalshi) to stay safe,
 # but use burst-capable intervals on Polymarket-specific scans.
 polling:
-  market_list_interval_seconds: 120     # 2 min — discover new markets FAST
-  price_snapshot_interval_seconds: 5    # 5s — near-real-time price tracking
-  trade_feed_interval_seconds: 10       # 10s — catch whale trades quickly
-  orderbook_interval_seconds: 5         # 5s — structural changes are time-sensitive
-  position_sync_interval_seconds: 15    # 15s — keep position state fresh
-  open_interest_interval_seconds: 60    # 1 min — open interest shifts
-  sync_interval_seconds: 30             # 30s — cross-platform divergence detection
+  market_list_interval_seconds: 60      # 1 min — 2x faster discovery with Advanced tier
+  price_snapshot_interval_seconds: 3    # 3s — near-real-time tracking (was 5s)
+  trade_feed_interval_seconds: 5        # 5s — catch whale trades (was 10s)
+  orderbook_interval_seconds: 3         # 3s — tighter book tracking (was 5s)
+  position_sync_interval_seconds: 5     # 5s — real-time position state (was 15s)
+  open_interest_interval_seconds: 30    # 30s — OI shifts (was 60s)
+  sync_interval_seconds: 15             # 15s — cross-platform divergence (was 30s)
 
 # ─── Platform API Configuration ───
-# Rate limiters set to ~80-90% of the free-tier ceiling for safety.
+# Rate limiters set to ~80-90% of the tier ceiling for safety.
 platforms:
   polymarket:
     base_url: "https://clob.polymarket.com"   # CLOB API for pricing data
@@ -57,7 +57,8 @@ platforms:
     rate_limit_per_second: 80                  # Free tier: 900/10s = 90/s → 80/s safe
   kalshi:
     base_url: "https://api.elections.kalshi.com/trade-api/v2"  # Kalshi v2 API
-    rate_limit_per_second: 8                   # Basic tier: ~10/s → 8/s safe
+    tier: "advanced"                           # Advanced tier: 30 read/s, 30 write/s
+    rate_limit_per_second: 30                  # Advanced tier: 30/s (was 8/s Basic)
 
 # ─── Cross-Platform Sync ───
 # Settings for the CrossPlatformSyncAgent that matches markets across platforms.

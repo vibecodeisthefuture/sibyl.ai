@@ -60,22 +60,22 @@ logger = logging.getLogger("sibyl.agents.kalshi_monitor")
 class KalshiMonitorAgent(BaseAgent):
     """Streams Kalshi market data into SQLite.
 
-    AGGRESSIVE POLLING (tuned to Kalshi's Basic-tier limits):
-      Kalshi Basic tier allows ~10 req/s.  We use 8 req/s (80% safety).
-      Kalshi is the bottleneck platform — fewer requests/s than Polymarket.
+    AGGRESSIVE POLLING (tuned to Kalshi's Advanced-tier limits):
+      Kalshi Advanced tier allows 30 read/s + 30 write/s.
+      TieredRateLimiter enforces separate read/write budgets.
 
-      At a 5-second poll interval:
-        - Market/event list refresh: every 24th cycle ≈ 2 minutes
-        - Full gap-fill discovery: first cycle + every 360th cycle ≈ 30 minutes
-        - Price snapshots: EVERY cycle (5s)
-        - Orderbook snapshots: EVERY cycle (5s)
-        - Recent trades: every 2nd cycle (10s)
+      At a 3-second poll interval:
+        - Market/event list refresh: every 20th cycle ≈ 1 minute
+        - Full gap-fill discovery: first cycle + every 360th cycle ≈ 18 minutes
+        - Price snapshots: EVERY cycle (3s)
+        - Orderbook snapshots: EVERY cycle (3s)
+        - Recent trades: every 2nd cycle (6s)
     """
 
     # Maximum number of markets to poll for live prices per cycle.
-    # With 5s cycles and ~10 req/s Kalshi limit, we can poll ~40 markets per cycle.
+    # With 3s cycles and 30 read/s Advanced tier, we can poll ~80+ markets per cycle.
     # The rest get prices seeded during discovery and updated less frequently.
-    MAX_LIVE_POLL_MARKETS = 40
+    MAX_LIVE_POLL_MARKETS = 120
 
     def __init__(self, db: DatabaseManager, config: dict[str, Any]) -> None:
         super().__init__(name="kalshi_monitor", db=db, config=config)
@@ -95,7 +95,7 @@ class KalshiMonitorAgent(BaseAgent):
     async def start(self) -> None:
         key_id = os.environ.get("KALSHI_KEY_ID", "")
         pk_path = os.environ.get("KALSHI_PRIVATE_KEY_PATH", "")
-        rate_limit = float(self._kalshi_config.get("rate_limit_per_second", 10))
+        tier = self._kalshi_config.get("tier", "basic")
         base_url = self._kalshi_config.get(
             "base_url", "https://api.elections.kalshi.com/trade-api/v2"
         )
@@ -104,12 +104,12 @@ class KalshiMonitorAgent(BaseAgent):
             key_id=key_id or None,
             private_key_path=pk_path or None,
             base_url=base_url,
-            rate_limit=rate_limit,
+            tier=tier,
         )
 
         auth_status = "authenticated" if self._client.is_authenticated else "public-only"
         self.logger.info(
-            "Kalshi client initialized (rate_limit=%.0f, auth=%s)", rate_limit, auth_status
+            "Kalshi client initialized (tier=%s, auth=%s)", tier, auth_status
         )
 
         # Load existing tracked markets from DB
