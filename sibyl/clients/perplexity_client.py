@@ -6,6 +6,11 @@ PURPOSE:
     uses for contextual analysis of prediction markets.  Returns grounded,
     web-sourced research summaries that complement Reddit and NewsAPI data.
 
+    Supports an additive Tavily search path: when SEARCH_PROVIDER=tavily,
+    research_market() routes through TavilySearchClient instead.  Perplexity
+    remains the default.  Tavily also serves as an automatic fallback when
+    Perplexity hits its daily call cap or returns an error.
+
 PRICING (as of 2026-03):
     - Sonar:       $1/M input tokens, $1/M output tokens
     - Sonar Pro:   $3/M input, $15/M output (deeper reasoning)
@@ -22,6 +27,7 @@ COST OPTIMIZATION:
 
 AUTHENTICATION:
     PERPLEXITY_API_KEY env var.  Never hardcoded or logged.
+    TAVILY_API_KEY env var (when SEARCH_PROVIDER=tavily or as fallback).
 """
 
 from __future__ import annotations
@@ -37,8 +43,121 @@ logger = logging.getLogger("sibyl.clients.perplexity")
 PERPLEXITY_CHAT_URL = "https://api.perplexity.ai/chat/completions"
 
 
+class TavilySearchClient:
+    """Thin wrapper around tavily-python for market research queries.
+
+    Mirrors the PerplexityClient.research_market() return format so callers
+    can swap providers transparently.
+    """
+
+    def __init__(self) -> None:
+        self._client: Any = None
+
+    def initialize(self) -> bool:
+        """Create Tavily client from TAVILY_API_KEY env var.
+
+        Returns:
+            True if the key is set and the client is ready.
+        """
+        api_key = os.environ.get("TAVILY_API_KEY", "")
+        if not api_key:
+            logger.info("TAVILY_API_KEY not set — Tavily search client disabled")
+            return False
+
+        try:
+            from tavily import TavilyClient
+            self._client = TavilyClient(api_key=api_key)
+            logger.info("Tavily search client initialized")
+            return True
+        except Exception:
+            logger.exception("Failed to initialize Tavily client")
+            return False
+
+    @property
+    def available(self) -> bool:
+        return self._client is not None
+
+    async def close(self) -> None:
+        """No-op — tavily-python manages its own connections."""
+
+    async def research_market(
+        self,
+        market_title: str,
+        context: str = "",
+    ) -> dict[str, Any] | None:
+        """Search the web for market-relevant information via Tavily.
+
+        Uses Tavily's search endpoint with advanced depth for highest
+        relevance, then parses results into the same dict format that
+        PerplexityClient.research_market() returns.
+
+        Args:
+            market_title: The prediction market question/title.
+            context:      Optional context string appended to the query.
+
+        Returns:
+            Dict with "summary", "sentiment_hint", "key_factors",
+            "citations", "score", or None on failure.
+        """
+        if not self._client:
+            return None
+
+        query = market_title
+        if context:
+            query += f" ({context})"
+
+        try:
+            # Run synchronous Tavily call (tavily-python is sync)
+            import asyncio
+            response = await asyncio.to_thread(
+                self._client.search,
+                query=query[:400],  # Tavily recommends <400 chars
+                max_results=5,
+                search_depth="advanced",
+                topic="news",
+            )
+
+            results = response.get("results", [])
+            if not results:
+                return None
+
+            # Build a summary from the top results
+            summaries = []
+            citations = []
+            for r in results[:5]:
+                if r.get("content"):
+                    summaries.append(r["content"][:200])
+                if r.get("url"):
+                    citations.append(r["url"])
+
+            combined_text = " ".join(summaries)
+
+            # Reuse the same parsing logic as PerplexityClient
+            parsed = PerplexityClient._parse_research_response(
+                combined_text, citations
+            )
+
+            logger.debug(
+                "Tavily research for '%s': %s",
+                market_title[:50],
+                parsed.get("sentiment_hint", "?"),
+            )
+            return parsed
+
+        except Exception:
+            logger.exception("Tavily search failed for: %s", market_title[:50])
+            return None
+
+
 class PerplexityClient:
     """Async Perplexity API client for market research queries.
+
+    Supports a provider selector via SEARCH_PROVIDER env var:
+        - "perplexity" (default): use Perplexity Sonar API
+        - "tavily": route all searches through TavilySearchClient
+
+    When using Perplexity, Tavily is used as an automatic fallback if the
+    daily call cap is reached or if a Perplexity request fails.
 
     Usage:
         client = PerplexityClient()
@@ -58,15 +177,40 @@ class PerplexityClient:
         self._max_tokens: int = 300  # keep responses compact
         self._calls_today: int = 0
         self._daily_call_cap: int = 30  # safety cap
+        self._search_provider: str = "perplexity"
+        self._tavily: TavilySearchClient | None = None
 
     def initialize(self) -> bool:
         """Load API key and create HTTP client.
 
+        Also initializes the Tavily fallback client if TAVILY_API_KEY is set.
+
         Returns:
-            True if API key is present and client is ready.
+            True if the primary provider (Perplexity or Tavily) is ready.
         """
+        self._search_provider = os.environ.get("SEARCH_PROVIDER", "perplexity").lower()
+
+        # Always try to initialize Tavily (used as fallback even when Perplexity is primary)
+        tavily = TavilySearchClient()
+        if tavily.initialize():
+            self._tavily = tavily
+
+        # If Tavily is the primary provider, we only need Tavily
+        if self._search_provider == "tavily":
+            if self._tavily:
+                logger.info("Search provider set to Tavily (primary)")
+                return True
+            logger.warning("SEARCH_PROVIDER=tavily but TAVILY_API_KEY not set")
+            # Fall through to try Perplexity as fallback
+
         self._api_key = os.environ.get("PERPLEXITY_API_KEY", "")
         if not self._api_key:
+            if self._tavily:
+                logger.info(
+                    "PERPLEXITY_API_KEY not set — using Tavily as search provider"
+                )
+                self._search_provider = "tavily"
+                return True
             logger.info("PERPLEXITY_API_KEY not set — Perplexity client disabled")
             return False
 
@@ -77,17 +221,22 @@ class PerplexityClient:
                 "Content-Type": "application/json",
             },
         )
-        logger.info("Perplexity client initialized (model=%s, max_tokens=%d)",
-                     self._model, self._max_tokens)
+        logger.info("Perplexity client initialized (model=%s, max_tokens=%d, fallback=%s)",
+                     self._model, self._max_tokens,
+                     "tavily" if self._tavily else "none")
         return True
 
     async def close(self) -> None:
         """Close the HTTP client."""
         if self._http:
             await self._http.aclose()
+        if self._tavily:
+            await self._tavily.close()
 
     @property
     def available(self) -> bool:
+        if self._search_provider == "tavily" and self._tavily:
+            return self._tavily.available
         return self._http is not None
 
     @property
@@ -104,20 +253,42 @@ class PerplexityClient:
         context: str = "",
         model_override: str | None = None,
     ) -> dict[str, Any] | None:
-        """Query Perplexity for contextual analysis of a prediction market.
+        """Query the configured search provider for contextual market analysis.
 
-        Sends a compact, structured prompt requesting grounded research
-        with citations.  Returns a parsed response dict.
+        Routes to Tavily when SEARCH_PROVIDER=tavily, otherwise uses Perplexity
+        with Tavily as a fallback on cap exhaustion or errors.
 
         Args:
             market_title:   The prediction market question/title.
             context:        Optional context (current odds, category, etc.)
             model_override: Override the default model (e.g., "sonar-pro").
+                            Ignored when using Tavily.
 
         Returns:
             Dict with "summary", "sentiment_hint", "key_factors",
             "citations", or None if unavailable/capped.
         """
+        # Route to Tavily when it is the primary provider
+        if self._search_provider == "tavily" and self._tavily:
+            return await self._tavily.research_market(market_title, context)
+
+        # ── Perplexity path (with Tavily fallback) ─────────────────────────
+        result = await self._perplexity_research(market_title, context, model_override)
+
+        # Fallback to Tavily on cap exhaustion or Perplexity failure
+        if result is None and self._tavily:
+            logger.debug("Falling back to Tavily for: %s", market_title[:50])
+            result = await self._tavily.research_market(market_title, context)
+
+        return result
+
+    async def _perplexity_research(
+        self,
+        market_title: str,
+        context: str = "",
+        model_override: str | None = None,
+    ) -> dict[str, Any] | None:
+        """Original Perplexity Sonar API research path."""
         if not self._http:
             return None
 
