@@ -39,6 +39,13 @@ package-lock.json
 homelab_plan.md
 shadcn_agent/
 
+# Claude Code tool settings (contain local machine paths — user-specific)
+.claude/
+
+# LT helper scripts (session-specific, contain local absolute paths)
+lt7_*.py
+lt8_*.py
+
 # Logs
 logs/
 *.log

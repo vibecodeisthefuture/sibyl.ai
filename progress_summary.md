@@ -1,12 +1,12 @@
 ---
 project: Sibyl.ai
 repo: https://github.com/vibecodeisthefuture/sibyl.ai
-date: 2026-04-04
-sprint_completed: 31
+date: 2026-04-05
+sprint_completed: 32
 test_count: 502
 test_status: 502_passing_21_pre_existing_failures
-latest_commit: pending
-current_focus: "LT8-paper: 24-hour validation of Sprint 31 fixes — sigmoid confidence, stale guard, horizon guard, balance anchor"
+latest_commit: 7d4d1aa
+current_focus: "LT8-paper: 24-hour validation of Sprint 31+32 fixes"
 related:
   - config/system_config.yaml
   - config/sge_config.yaml
@@ -23,7 +23,7 @@ related:
 
 # Sibyl.ai — Development Progress Index
 
-Sibyl.ai is an autonomous prediction market trading agent built on Kalshi with 31 completed sprints. Current state: crypto-only with Always-On Bracket Trader, Hyperliquid real-time price streaming (1-second), and DB-first architecture for persistent participation in every BTC/ETH/SOL/XRP market iteration across 15-min, hourly, and daily timeframes. Sprint 29 was a comprehensive "Fix the Math" sprint driven by a professional 4-pillar system audit — fixing 10 bugs. Sprint 31 implemented 6 post-LT7 auditor recommendations: sigmoid confidence mapping, correlation discount, stale/horizon guards, paper balance anchor, and holding period minimums.
+Sibyl.ai is an autonomous prediction market trading agent built on Kalshi with 32 completed sprints. Current state: crypto-only with Always-On Bracket Trader, Hyperliquid real-time price streaming (1-second), and DB-first architecture for persistent participation in every BTC/ETH/SOL/XRP market iteration across 15-min, hourly, and daily timeframes. Sprint 29–31 fixed 16 bugs from professional audit + LT7 findings. Sprint 32 made startup fully autonomous: Kalshi API queried at boot, stale HWM auto-reset, and open position reconciliation — no manual DB intervention required between sessions.
 
 ## Quick Reference
 
@@ -34,13 +34,57 @@ Sibyl.ai is an autonomous prediction market trading agent built on Kalshi with 3
 
 ## Current Status
 
-- **Sprint Completed:** 31 (Auditor Recommendations — sigmoid confidence, guards, balance anchor, 2026-04-04)
-- **Test Count:** 502 passing, 21 pre-existing failures (0 regressions from Sprint 31)
-- **Current Focus:** LT8-paper — 24-hour paper validation of all Sprint 31 fixes
-- **Live Account:** ~$100 ($36.63 cash + $63.30 exposure)
-- **All-Time Return:** -$91.76 (-47.9% from $191.69 deposit)
-- **LT7 Paper Result:** +$117.21 net P&L on paper (35.5% win rate, Sharpe 3.87, $78.50 buy-side fees tracked)
-- **Gate to live capital:** LT8 must validate Sprint 31 fixes — no new deposits until positive live result
+- **Sprint Completed:** 32 (Startup Autonomy — Kalshi sync, stale HWM reset, position reconcile, 2026-04-05)
+- **Test Count:** 502 passing, 21 pre-existing failures (0 regressions from Sprints 31–32)
+- **Current Focus:** LT8-paper — 24-hour paper validation of all Sprint 31+32 fixes
+- **Live Account:** $107.63 (API-verified 2026-04-05, 0 open positions)
+- **All-Time Return:** -$83.76 (-43.7% from $191.69 deposit — partial recovery since LT5 low)
+- **Pre-LT8 Paper Result:** +$24.30 net (66.7% WR, conf std=0.054 PASS, 0 stale entries, 0 DRAWDOWN HALTs)
+- **Sprint 32 30-min Test:** +$5.27 net (37.5% WR, conf std=0.074 PASS, auto-correction confirmed)
+- **Gate to live capital:** LT8-paper must pass all 5 auditor criteria before live capital deployed
+
+---
+
+## Sprint 32: Startup Autonomy (2026-04-05)
+
+Eliminated all manual DB intervention required between test sessions. Three interlocking fixes ensure Sibyl starts clean every time regardless of what state the previous session left behind.
+
+### Fix 1 — Startup Kalshi Sync (always-on) ✅
+
+- **Problem:** `portfolio_cash_available` / `portfolio_position_exposure` / `portfolio_total_balance` in DB were stale since 2026-03-31 (5 days old) — Kalshi client was only initialized in live mode
+- **Fix:** `_startup_sync_kalshi()` runs unconditionally (paper + live) at boot, queries Kalshi API, and writes authoritative values to system_state before the first allocation cycle
+- **File:** `sibyl/agents/allocator/portfolio_allocator.py`
+
+### Fix 2 — Stale HWM Auto-Reset ✅
+
+- **Problem:** Risk dashboard loaded persisted HWM ($1,382) into memory at startup — in-memory value doesn't get updated by DB write, causing immediate CRITICAL drawdown halt
+- **Fix:** Every `run_cycle` checks if HWM > current_balance × 3.0; if so, resets in-memory and persists to DB. Fires on first cycle after allocator sync completes — timing-safe regardless of agent startup order
+- **File:** `sibyl/agents/analytics/risk_dashboard.py`
+
+### Fix 3 — Startup Position Reconcile ✅
+
+- **Problem:** Stale DB-open positions (resolved on Kalshi but not closed in DB) blocked the correlation tracker and signal dedup, preventing new executions
+- **Fix:** If Kalshi reports $0 exposure at startup, all DB-open positions are closed automatically — Kalshi is authoritative
+- **File:** `sibyl/agents/allocator/portfolio_allocator.py`
+
+### Sprint 32 Validation — 30-min Paper Test (2026-04-05 09:41–10:15 PDT)
+
+DB poisoned with HWM=$1,382 and portfolio_total_balance=$9,999 before launch — no manual resets:
+
+| Check | Result |
+| --- | --- |
+| Kalshi startup sync | **CONFIRMED** — cash=$107.63, exposure=$0.00 written at 09:36 UTC |
+| Stale HWM auto-reset | **CONFIRMED** — "STALE HWM RESET: 61.9× current balance" at first cycle |
+| DRAWDOWN HALT count | **0** (was >200 in pre-fix test) |
+| Remaining open at ENDEX | **0** — fully clean |
+| Confidence std | **0.074** (PASS > 0.05) |
+| Net P&L | **+$5.27** after fees |
+| Live account | **$107.63 unchanged** — paper mode confirmed |
+
+### Repo Security Fix ✅
+
+- Removed `.claude/` from git tracking (contained local machine paths with username)
+- Added `.claude/` and `lt*.py` to `.gitignore`
 
 ---
 
