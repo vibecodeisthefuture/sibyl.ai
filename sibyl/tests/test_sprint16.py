@@ -19,9 +19,9 @@ from datetime import datetime, timezone, timedelta
 class TestDedupWindows:
     """Verify per-category dedup windows are properly set."""
 
-    def test_crypto_dedup_15min(self):
+    def test_crypto_dedup_2min(self):
         from sibyl.pipelines.crypto_pipeline import CryptoPipeline
-        assert CryptoPipeline.DEDUP_WINDOW_MINUTES == 15
+        assert CryptoPipeline.DEDUP_WINDOW_MINUTES == 2
 
     def test_sports_dedup_30min(self):
         from sibyl.pipelines.sports_pipeline import SportsPipeline
@@ -31,9 +31,9 @@ class TestDedupWindows:
         from sibyl.pipelines.financial_pipeline import FinancialPipeline
         assert FinancialPipeline.DEDUP_WINDOW_MINUTES == 60
 
-    def test_weather_dedup_120min(self):
+    def test_weather_dedup_60min(self):
         from sibyl.pipelines.weather_pipeline import WeatherPipeline
-        assert WeatherPipeline.DEDUP_WINDOW_MINUTES == 120
+        assert WeatherPipeline.DEDUP_WINDOW_MINUTES == 60
 
     def test_culture_dedup_120min(self):
         from sibyl.pipelines.culture_pipeline import CulturePipeline

@@ -46,10 +46,10 @@ from __future__ import annotations
 import asyncio
 import json
 import logging
-import os
+import time
 from typing import Any
 
-from sibyl.clients.kalshi_client import KalshiClient
+from sibyl.clients.kalshi_client import KalshiClient, get_shared_kalshi_client
 from sibyl.core.base_agent import BaseAgent
 from sibyl.core.database import DatabaseManager
 from sibyl.core.market_discovery import classify_category, discover_markets, seed_markets
@@ -77,6 +77,16 @@ class KalshiMonitorAgent(BaseAgent):
     # The rest get prices seeded during discovery and updated less frequently.
     MAX_LIVE_POLL_MARKETS = 120
 
+    # Sprint 23A: Targeted crypto series for efficient discovery.
+    # Uses series_ticker filter + min_close_ts to fetch ONLY open crypto markets
+    # directly from Kalshi API — no brute-force gap-fill needed.
+    CRYPTO_SERIES = [
+        "KXBTC", "KXBTCD", "KXBTCMIN", "KXBTCMAX",
+        "KXETH", "KXETHD", "KXETHMIN", "KXETHMAX",
+        "KXSOL", "KXSOLD", "KXSOLMIN", "KXSOLMAX",
+        "KXXRP", "KXXRPD", "KXXRPMIN", "KXXRPMAX",
+    ]
+
     def __init__(self, db: DatabaseManager, config: dict[str, Any]) -> None:
         super().__init__(name="kalshi_monitor", db=db, config=config)
         self._kalshi_config = config.get("platforms", {}).get("kalshi", {})
@@ -93,24 +103,11 @@ class KalshiMonitorAgent(BaseAgent):
         return float(self._polling.get("price_snapshot_interval_seconds", 5))
 
     async def start(self) -> None:
-        key_id = os.environ.get("KALSHI_KEY_ID", "")
-        pk_path = os.environ.get("KALSHI_PRIVATE_KEY_PATH", "")
-        tier = self._kalshi_config.get("tier", "basic")
-        base_url = self._kalshi_config.get(
-            "base_url", "https://api.elections.kalshi.com/trade-api/v2"
-        )
-
-        self._client = KalshiClient(
-            key_id=key_id or None,
-            private_key_path=pk_path or None,
-            base_url=base_url,
-            tier=tier,
-        )
+        # Sprint 23D: Use shared Kalshi client — single rate limiter across all agents
+        self._client = get_shared_kalshi_client(self.config)
 
         auth_status = "authenticated" if self._client.is_authenticated else "public-only"
-        self.logger.info(
-            "Kalshi client initialized (tier=%s, auth=%s)", tier, auth_status
-        )
+        self.logger.info("Kalshi monitor using shared client (auth=%s)", auth_status)
 
         # Load existing tracked markets from DB
         rows = await self.db.fetchall(
@@ -126,18 +123,20 @@ class KalshiMonitorAgent(BaseAgent):
 
         # ── Market list refresh (every 24 cycles ≈ 2 min at 5s polling) ─
         if self._cycle_count % 24 == 0:
-            # Sprint 22.5: Standard fetch with limit=200 now covers ALL 27K+
-            # markets in ~3s, making gap-fill redundant.  First run does a full
-            # discovery via _refresh_markets_with_discovery; subsequent runs
-            # use the lighter _refresh_markets_standard to pick up new listings.
             if not self._gap_fill_done:
+                # First run: standard pagination for broad market coverage,
+                # then targeted crypto discovery for all timeframes.
                 if self._gap_fill_task is None or self._gap_fill_task.done():
                     self._gap_fill_task = asyncio.create_task(
-                        self._refresh_markets_with_discovery(gap_fill=False)
+                        self._initial_discovery()
                     )
             else:
-                # Standard refresh: just paginate for new/updated markets
+                # Subsequent runs: standard refresh + targeted crypto refresh.
+                # Sprint 23A: Targeted crypto refresh uses series_ticker filter
+                # to efficiently discover 15-min/hourly/daily/monthly markets
+                # without scanning all events.
                 await self._refresh_markets_standard()
+                await self._refresh_crypto_markets()
 
         if not self._tracked_markets:
             return
@@ -170,8 +169,7 @@ class KalshiMonitorAgent(BaseAgent):
                 await self._gap_fill_task
             except asyncio.CancelledError:
                 pass
-        if self._client:
-            await self._client.close()
+        # Don't close shared client — other agents may still need it
         self.logger.info("Kalshi monitor stopped")
 
     # ── Market Discovery Methods ───────────────────────────────────────
@@ -309,6 +307,134 @@ class KalshiMonitorAgent(BaseAgent):
 
         await self.db.commit()
         self.logger.info("Refreshed %d Kalshi markets from %d events", upserted, len(events))
+
+    # ── Sprint 23A: Targeted Crypto Discovery ──────────────────────────
+
+    async def _initial_discovery(self) -> None:
+        """First-run discovery: standard pagination + targeted crypto fetch.
+
+        Runs standard Phase 1 for broad coverage, then targeted crypto series
+        fetch to ensure all crypto timeframes are in the DB.  Sets
+        _gap_fill_done so subsequent cycles use the lighter refresh path.
+        """
+        try:
+            await self._refresh_markets_with_discovery(gap_fill=False)
+            await self._refresh_crypto_markets()
+            self._gap_fill_done = True
+            self.logger.info("Initial discovery complete — switching to targeted refresh")
+        except Exception:
+            self.logger.exception("Initial discovery failed")
+
+    async def _refresh_crypto_markets(self) -> None:
+        """Targeted crypto market discovery using series_ticker + min_close_ts.
+
+        Sprint 23A: Instead of brute-force gap-fill across all categories,
+        fetch only the 16 crypto series directly from Kalshi's /markets
+        endpoint.  Each call filters by series_ticker and min_close_ts=now,
+        so we only get open, non-expired crypto markets.
+
+        Typical cost: 16 API calls × ~1-2 markets pages = ~20 calls total.
+        Much faster than scanning 50+ pages of all-category events.
+        """
+        if not self._client:
+            return
+
+        now_ts = int(time.time())
+        total_upserted = 0
+
+        for series in self.CRYPTO_SERIES:
+            cursor = None
+            series_count = 0
+            # Paginate each series (most have <200 markets)
+            for _page in range(5):  # safety cap: 5 pages × 200 = 1000 markets/series
+                try:
+                    data = await self._client.get_markets(
+                        limit=200,
+                        cursor=cursor,
+                        series_ticker=series,
+                        status="open",
+                        min_close_ts=now_ts,
+                    )
+                except Exception as e:
+                    self.logger.warning(
+                        "Crypto refresh %s failed: %s", series, e
+                    )
+                    break
+
+                markets = data.get("markets", [])
+                if not markets:
+                    break
+
+                for m in markets:
+                    ticker = m.get("ticker", "")
+                    if not ticker:
+                        continue
+
+                    title = m.get("title") or m.get("subtitle") or ""
+                    close_date = m.get("close_time") or m.get("expiration_time")
+                    event_ticker = m.get("event_ticker", "")
+
+                    # Extract price for pipeline seeding
+                    yes_price = None
+                    yes_ask = m.get("yes_ask_dollars") or m.get("yes_ask")
+                    yes_bid = m.get("yes_bid_dollars") or m.get("yes_bid")
+                    last_price = m.get("last_price_dollars") or m.get("last_price")
+
+                    if yes_ask is not None and yes_bid is not None:
+                        try:
+                            ask_f, bid_f = float(yes_ask), float(yes_bid)
+                            if ask_f > 0 or bid_f > 0:
+                                yes_price = (bid_f + ask_f) / 2.0
+                                if yes_price > 1.0:
+                                    yes_price /= 100.0
+                        except (ValueError, TypeError):
+                            pass
+                    if yes_price is None and last_price is not None:
+                        try:
+                            lp = float(last_price)
+                            if lp > 0:
+                                yes_price = lp if lp <= 1.0 else lp / 100.0
+                        except (ValueError, TypeError):
+                            pass
+
+                    await self.db.execute(
+                        """INSERT INTO markets (id, platform, title, category, close_date,
+                                              status, event_id, updated_at)
+                           VALUES (?, 'kalshi', ?, 'crypto', ?, 'active', ?, datetime('now'))
+                           ON CONFLICT(id) DO UPDATE SET
+                             title = excluded.title,
+                             close_date = excluded.close_date,
+                             status = excluded.status,
+                             event_id = excluded.event_id,
+                             updated_at = datetime('now')
+                        """,
+                        (ticker, title, close_date, event_ticker),
+                    )
+
+                    if yes_price is not None and 0 < yes_price < 1.0:
+                        await self.db.execute(
+                            "INSERT INTO prices (market_id, yes_price, no_price) VALUES (?, ?, ?)",
+                            (ticker, yes_price, 1.0 - yes_price),
+                        )
+
+                    self._tracked_markets[ticker] = {
+                        "title": title,
+                        "event_ticker": event_ticker,
+                    }
+                    series_count += 1
+
+                cursor = data.get("cursor")
+                if not cursor:
+                    break
+
+            total_upserted += series_count
+
+        if total_upserted > 0:
+            await self.db.commit()
+        self.logger.info(
+            "Crypto targeted refresh: %d markets across %d series",
+            total_upserted, len(self.CRYPTO_SERIES),
+        )
 
     # ── DB Auto-Close Guard ────────────────────────────────────────────
 

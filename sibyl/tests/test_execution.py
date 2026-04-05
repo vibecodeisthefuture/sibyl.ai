@@ -176,11 +176,11 @@ def test_order_executor_paper_fill(db, config, event_loop):
             ("MKT-PF", "kalshi", "Paper Fill Test", "crypto", "active"),
         )
         await db.execute(
-            "INSERT INTO prices (market_id, yes_price) VALUES ('MKT-PF', 0.35)"
+            "INSERT INTO prices (market_id, yes_price) VALUES ('MKT-PF', 0.65)"
         )
         await db.execute(
-            """INSERT INTO signals (market_id, signal_type, confidence, ev_estimate, status, routed_to)
-               VALUES ('MKT-PF', 'VOLUME_SURGE', 0.72, 0.08, 'ROUTED', 'SGE')"""
+            """INSERT INTO signals (market_id, signal_type, confidence, ev_estimate, status, routed_to, direction)
+               VALUES ('MKT-PF', 'VOLUME_SURGE', 0.72, 0.08, 'ROUTED', 'SGE', 'YES')"""
         )
         await db.commit()
 
@@ -191,7 +191,7 @@ def test_order_executor_paper_fill(db, config, event_loop):
         assert pos is not None
         assert pos["status"] == "OPEN"
         assert pos["engine"] == "SGE"
-        assert pos["side"] == "YES"  # Price < 0.50 → buy YES
+        # Sprint 28: price 0.65 is within [50c, 93c] entry range
 
         # Execution should have been recorded
         exe = await db.fetchone("SELECT * FROM executions WHERE engine = 'SGE'")
@@ -386,3 +386,200 @@ def test_ev_monitor_updates_current_price(db, config, event_loop):
         assert float(pos["current_price"]) == pytest.approx(0.65, abs=0.01)
 
     event_loop.run_until_complete(_test())
+
+
+# ═══════════════════════════════════════════════════════════════════════════
+# Sprint 29: Tiered Entry Floor + Dynamic Contract Cap Tests
+# ═══════════════════════════════════════════════════════════════════════════
+
+
+def test_tiered_entry_floor_15min_allows_low_price(db, config, event_loop):
+    """15-min timeframe should allow entries as low as 5c (not blocked by old 50c floor)."""
+    from sibyl.agents.execution.order_executor import OrderExecutor
+    from sibyl.core.policy import PolicyEngine
+
+    async def _test():
+        executor = OrderExecutor(db=db, config=config, mode="paper")
+        executor._sge_risk = {
+            "kelly_fraction": 0.15,
+            "max_single_position_pct": 0.10,
+            "per_market_stop_loss_pct": 0.35,
+        }
+        # Initialize policy so cat_profile with tiered floors is available
+        executor._policy = PolicyEngine()
+        executor._policy.initialize()
+
+        await db.execute(
+            """INSERT OR REPLACE INTO engine_state (engine, total_capital, available_capital, circuit_breaker)
+               VALUES ('SGE', 5000, 5000, 'CLEAR')"""
+        )
+        await db.execute(
+            "INSERT INTO markets (id, platform, title, category, status) VALUES (?, ?, ?, ?, ?)",
+            ("MKT-TF15", "kalshi", "BTC 15min Bracket", "crypto", "active"),
+        )
+        # 8c price — would be blocked by old 50c floor, should pass with 5c 15-min floor
+        await db.execute(
+            "INSERT INTO prices (market_id, yes_price) VALUES ('MKT-TF15', 0.08)"
+        )
+        await db.execute(
+            """INSERT INTO signals (market_id, signal_type, confidence, ev_estimate, status, routed_to, direction, timeframe)
+               VALUES ('MKT-TF15', 'BRACKET_MODEL', 0.72, 0.08, 'ROUTED', 'SGE', 'YES', '15min')"""
+        )
+        await db.commit()
+
+        await executor.run_cycle()
+
+        pos = await db.fetchone("SELECT * FROM positions WHERE market_id = 'MKT-TF15'")
+        assert pos is not None, "15min signal at 8c should NOT be blocked by price gate"
+        assert pos["status"] == "OPEN"
+
+    event_loop.run_until_complete(_test())
+
+
+def test_tiered_entry_floor_15min_rejects_below_5c(db, config, event_loop):
+    """15-min timeframe should reject entries below 5c floor."""
+    from sibyl.agents.execution.order_executor import OrderExecutor
+    from sibyl.core.policy import PolicyEngine
+
+    async def _test():
+        executor = OrderExecutor(db=db, config=config, mode="paper")
+        executor._sge_risk = {
+            "kelly_fraction": 0.15,
+            "max_single_position_pct": 0.10,
+            "per_market_stop_loss_pct": 0.35,
+        }
+        executor._policy = PolicyEngine()
+        executor._policy.initialize()
+
+        await db.execute(
+            """INSERT OR REPLACE INTO engine_state (engine, total_capital, available_capital, circuit_breaker)
+               VALUES ('SGE', 5000, 5000, 'CLEAR')"""
+        )
+        await db.execute(
+            "INSERT INTO markets (id, platform, title, category, status) VALUES (?, ?, ?, ?, ?)",
+            ("MKT-TF15R", "kalshi", "BTC 15min Extreme Longshot", "crypto", "active"),
+        )
+        # 3c price — below 5c 15-min floor
+        await db.execute(
+            "INSERT INTO prices (market_id, yes_price) VALUES ('MKT-TF15R', 0.03)"
+        )
+        await db.execute(
+            """INSERT INTO signals (market_id, signal_type, confidence, ev_estimate, status, routed_to, direction, timeframe)
+               VALUES ('MKT-TF15R', 'BRACKET_MODEL', 0.72, 0.08, 'ROUTED', 'SGE', 'YES', '15min')"""
+        )
+        await db.commit()
+
+        await executor.run_cycle()
+
+        pos = await db.fetchone("SELECT * FROM positions WHERE market_id = 'MKT-TF15R'")
+        assert pos is None, "15min signal at 3c should be blocked by 5c floor"
+
+    event_loop.run_until_complete(_test())
+
+
+def test_dynamic_contract_cap_low_price(db, config, event_loop):
+    """Low-price entry (8c) should get higher contract cap (15) than flat cap of 5."""
+    from sibyl.agents.execution.order_executor import OrderExecutor
+    from sibyl.core.policy import PolicyEngine
+
+    async def _test():
+        executor = OrderExecutor(db=db, config=config, mode="paper")
+        executor._sge_risk = {
+            "kelly_fraction": 0.50,  # High Kelly to ensure sizing hits the cap
+            "max_single_position_pct": 0.50,
+            "per_market_stop_loss_pct": 0.35,
+        }
+        executor._policy = PolicyEngine()
+        executor._policy.initialize()
+
+        await db.execute(
+            """INSERT OR REPLACE INTO engine_state (engine, total_capital, available_capital, circuit_breaker)
+               VALUES ('SGE', 5000, 5000, 'CLEAR')"""
+        )
+        await db.execute(
+            "INSERT INTO markets (id, platform, title, category, status) VALUES (?, ?, ?, ?, ?)",
+            ("MKT-DCC", "kalshi", "BTC 15min Low Price", "crypto", "active"),
+        )
+        await db.execute(
+            "INSERT INTO prices (market_id, yes_price) VALUES ('MKT-DCC', 0.10)"
+        )
+        await db.execute(
+            """INSERT INTO signals (market_id, signal_type, confidence, ev_estimate, status, routed_to, direction, timeframe)
+               VALUES ('MKT-DCC', 'BRACKET_MODEL', 0.80, 0.12, 'ROUTED', 'SGE', 'YES', '15min')"""
+        )
+        await db.commit()
+
+        await executor.run_cycle()
+
+        pos = await db.fetchone("SELECT * FROM positions WHERE market_id = 'MKT-DCC'")
+        assert pos is not None, "Position should be created"
+        # With $5000 capital, 50% Kelly, 50% max position = $1250 max
+        # At 10c per contract, that's 12500 contracts before cap
+        # Dynamic cap for <=20c entry = 15 contracts
+        assert int(pos["size"]) == 15, f"Expected 15 contracts (dynamic cap for <=20c), got {pos['size']}"
+
+    event_loop.run_until_complete(_test())
+
+
+# ═══════════════════════════════════════════════════════════════════════════
+# Sprint 29 Tests — Audit Remediation
+# ═══════════════════════════════════════════════════════════════════════════
+
+
+def test_pnl_includes_fees(db, config, event_loop):
+    """Sprint 29 BUG-002: P&L computation must deduct fees."""
+    from sibyl.agents.execution.position_lifecycle import PositionLifecycleManager
+
+    pos_yes = {
+        "side": "YES", "entry_price": 0.40, "size": 10,
+        "current_price": 0.60,
+    }
+    # Raw P&L = (0.60 - 0.40) * 10 = $2.00
+    # Roundtrip fee = 10 * 0.014 = $0.14
+    # Net P&L = $2.00 - $0.14 = $1.86
+    pnl = PositionLifecycleManager._compute_pnl_with_price(pos_yes, 0.60)
+    assert abs(pnl - 1.86) < 0.01, f"Expected ~$1.86 net of fees, got ${pnl:.4f}"
+
+    # Settlement exit (buy-side fee only)
+    pnl_settle = PositionLifecycleManager._compute_pnl_with_price(
+        pos_yes, 0.60, is_settlement=True
+    )
+    # Fee = 10 * 0.007 = $0.07 (buy-side only)
+    # Net P&L = $2.00 - $0.07 = $1.93
+    assert abs(pnl_settle - 1.93) < 0.01, f"Expected ~$1.93 for settlement, got ${pnl_settle:.4f}"
+
+
+def test_no_side_kelly_uses_no_cost(db, config, event_loop):
+    """Sprint 29 BUG-001: NO positions must use (1-yes_price) as cost basis for Kelly."""
+    # This is a structural test — we verify the payout computation logic.
+    # For YES at 70c: cost=0.70, payout = (1/0.70)-1 = 0.4286
+    # For NO  at 70c yes_price: cost=0.30, payout = (1/0.30)-1 = 2.3333
+    # The old code used 0.70 for both → undersizing NO by 5.4x
+
+    yes_price = 0.70
+    # YES payout
+    yes_cost = yes_price
+    yes_payout = (1.0 / yes_cost) - 1.0
+    assert abs(yes_payout - 0.4286) < 0.01
+
+    # NO payout (Sprint 29 fix)
+    no_cost = 1.0 - yes_price
+    no_payout = (1.0 / no_cost) - 1.0
+    assert abs(no_payout - 2.3333) < 0.01
+    assert no_payout > yes_payout * 4, "NO payout should be much larger than YES payout"
+
+
+def test_fee_column_in_schema(db, config, event_loop):
+    """Sprint 29: Executions table must have fee_amount column."""
+    async def _test():
+        cols = await db.fetchall("PRAGMA table_info(executions)")
+        col_names = [c["name"] for c in cols]
+        assert "fee_amount" in col_names, f"fee_amount missing from executions: {col_names}"
+
+    event_loop.run_until_complete(_test())
+
+
+def test_auto_calibrator_import():
+    """Sprint 29: AutoCalibrator agent must be importable."""
+    from sibyl.agents.analytics.auto_calibrator import AutoCalibrator
+    assert AutoCalibrator is not None

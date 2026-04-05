@@ -179,7 +179,8 @@ CREATE TABLE IF NOT EXISTS executions (
     side        TEXT NOT NULL CHECK (side IN ('BUY', 'SELL')),
     fill_price  REAL NOT NULL,
     size        REAL NOT NULL,
-    order_type  TEXT DEFAULT 'LIMIT'
+    order_type  TEXT DEFAULT 'LIMIT',
+    fee_amount  REAL DEFAULT 0.0
 );
 CREATE INDEX IF NOT EXISTS idx_executions_engine ON executions(engine);
 
@@ -393,6 +394,10 @@ MIGRATION_SQL = [
     ("signals", "direction", "ALTER TABLE signals ADD COLUMN direction TEXT DEFAULT 'YES'"),
     # Signals table: source_pipeline for pipeline attribution tracking
     ("signals", "source_pipeline", "ALTER TABLE signals ADD COLUMN source_pipeline TEXT"),
+    # Sprint 24: Timeframe for Brier-tiered Kelly sizing
+    ("signals", "timeframe", "ALTER TABLE signals ADD COLUMN timeframe TEXT"),
+    # Sprint 29: Fee accounting — track per-execution fee for accurate P&L
+    ("executions", "fee_amount", "ALTER TABLE executions ADD COLUMN fee_amount REAL DEFAULT 0.0"),
 ]
 
 
@@ -437,7 +442,7 @@ class DatabaseManager:
             2. Open an aiosqlite connection.
             3. Set row_factory to aiosqlite.Row so results are dict-like.
             4. Enable WAL mode for concurrent reads across agents.
-            5. Set busy_timeout to 5 seconds (wait instead of erroring on lock).
+            5. Set busy_timeout to 30 seconds (wait instead of erroring on lock).
             6. Enable foreign key enforcement (SQLite disables this by default!).
             7. Run the full schema SQL.
         """
@@ -449,8 +454,9 @@ class DatabaseManager:
 
         # Enable WAL mode for concurrent reads (critical for multi-agent system)
         await self._connection.execute("PRAGMA journal_mode=WAL")
-        # Wait up to 5s if another writer holds the lock, instead of erroring
-        await self._connection.execute("PRAGMA busy_timeout=5000")
+        # Wait up to 30s if another writer holds the lock — seed_markets
+        # bulk inserts 26K+ rows and can hold the write lock for 10-20s
+        await self._connection.execute("PRAGMA busy_timeout=30000")
         # SQLite doesn't enforce foreign keys by default — we must opt in!
         await self._connection.execute("PRAGMA foreign_keys=ON")
 

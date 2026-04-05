@@ -43,7 +43,7 @@ class CryptoPipeline(BasePipeline):
 
     CATEGORY = "Crypto"
     PIPELINE_NAME = "crypto"
-    DEDUP_WINDOW_MINUTES = 5   # Sprint 20: 5-min dedup — crypto needs rapid signal refresh
+    DEDUP_WINDOW_MINUTES = 2   # Sprint 23: 2-min dedup — 60s cycles need tighter window
     MARKET_HORIZON_DAYS = 30   # Sprint 22: 30 days — captures monthly min/max brackets
 
     # Crypto keyword mappings for market matching
@@ -125,9 +125,18 @@ class CryptoPipeline(BasePipeline):
         },
     }
 
-    # Sprint 22: Minimum edge (in probability points) for BRACKET_MODEL signals.
-    # Aligned with investment_policy_config.yaml bracket_min_edge: 0.015.
-    BRACKET_MIN_EDGE = 0.015
+    # Sprint 23A: Timeframe-scaled minimum edge thresholds.
+    # Short-duration markets have compressed sigma_t (volatility scales with
+    # sqrt(time)), so a flat 1.5% edge floor systematically filters them out.
+    # Scale thresholds proportionally to give each timeframe fair treatment.
+    BRACKET_MIN_EDGE = 0.015  # Default / monthly fallback
+    BRACKET_MIN_EDGE_BY_TIMEFRAME = {
+        "15min":   0.005,  # 0.5% — tight windows, small but real edges
+        "hourly":  0.008,  # 0.8%
+        "4hour":   0.010,  # 1.0%
+        "daily":   0.012,  # 1.2%
+        "monthly": 0.015,  # 1.5% — unchanged
+    }
 
     # Threshold constants for signal generation
     # Sprint 20: Widened thresholds to capture more crypto signals
@@ -365,9 +374,10 @@ class CryptoPipeline(BasePipeline):
             target_markets = await self._enumerate_target_markets()
 
             # Sprint 22: Pre-fetch Kalshi spreads for spread-adjusted EV.
-            # Loads bid-ask spread from the Kalshi orderbook table for each
-            # target market so the bracket model deducts execution costs.
+            # Sprint 24: Also compute per-market Kalshi OBI for directional signal.
+            # Research: OBI predicts direction at 62% accuracy over 1-5 min.
             self._kalshi_spreads: Dict[str, float] = {}
+            self._kalshi_obi: Dict[str, float] = {}
             try:
                 all_market_ids = []
                 for mkt_list in target_markets.values():
@@ -397,18 +407,32 @@ class CryptoPipeline(BasePipeline):
                                 ba = float(_a[0].get("price", 1))
                                 if bb > 0 and ba > bb:
                                     self._kalshi_spreads[mid] = ba - bb
+                            # Sprint 24: Compute Kalshi OBI from top-3 levels
+                            bid_vol = sum(
+                                float(lv.get("size", 0))
+                                for lv in (_b[:3] if _b else [])
+                            )
+                            ask_vol = sum(
+                                float(lv.get("size", 0))
+                                for lv in (_a[:3] if _a else [])
+                            )
+                            total_vol = bid_vol + ask_vol
+                            if total_vol > 0:
+                                self._kalshi_obi[mid] = (bid_vol - ask_vol) / total_vol
                         except Exception:
                             pass
                     if self._kalshi_spreads:
                         avg_spread = sum(self._kalshi_spreads.values()) / len(self._kalshi_spreads)
                         logger.info(
-                            "Kalshi spreads loaded: %d markets, avg=%.3f",
+                            "Kalshi spreads loaded: %d markets, avg=%.3f, OBI=%d",
                             len(self._kalshi_spreads), avg_spread,
+                            len(self._kalshi_obi),
                         )
             except Exception as e:
                 logger.debug("Kalshi spread pre-fetch failed (non-fatal): %s", e)
 
             signals.extend(self._bracket_model_signals(target_markets))
+            signals.extend(self._bracket_arbitrage_signals(target_markets))
 
             logger.info(
                 f"Crypto pipeline analysis complete: {len(signals)} signals generated"
@@ -1124,6 +1148,7 @@ class CryptoPipeline(BasePipeline):
             for prefix in spec["ticker_prefixes"]:
                 rows = await self._db.fetchall(
                     """SELECT m.id, m.title, m.close_date, m.category,
+                              m.event_id,
                               (SELECT p.yes_price FROM prices p
                                WHERE p.market_id = m.id
                                ORDER BY p.timestamp DESC LIMIT 1) AS yes_price
@@ -1193,6 +1218,95 @@ class CryptoPipeline(BasePipeline):
         else:
             return "monthly"
 
+    def _bracket_arbitrage_signals(
+        self, target_markets: Dict[str, List[Dict]]
+    ) -> List[PipelineSignal]:
+        """Detect mispriced bracket groups where YES prices don't sum to $1.00.
+
+        For each event (group of mutually exclusive brackets), sums all YES
+        prices.  If sum < 1.00 minus spread costs → buy-all-YES arb.
+        If sum > 1.00 plus spread costs → targeted NO signals on overpriced
+        brackets.
+
+        Research basis: single-market rebalancing captured $5.9M in arb
+        profits (14.9% of total prediction market arbitrage, 2024-2025).
+        """
+        signals: List[PipelineSignal] = []
+
+        # Flatten all markets across assets and group by event_id
+        event_groups: Dict[str, List[Dict]] = {}
+        for _cg_id, markets in target_markets.items():
+            for m in markets:
+                eid = m.get("event_id") or ""
+                if not eid:
+                    continue
+                price = m.get("yes_price")
+                if price is None:
+                    continue
+                event_groups.setdefault(eid, []).append(m)
+
+        for event_id, group in event_groups.items():
+            if len(group) < 2:
+                continue  # Need at least 2 brackets for arb check
+
+            # Sum YES prices across all brackets in this event
+            total_yes = 0.0
+            total_spread_cost = 0.0
+            valid_markets = []
+            for m in group:
+                price = float(m["yes_price"])
+                if price <= 0 or price >= 1.0:
+                    continue
+                spread = self._kalshi_spreads.get(m["id"], 0.02)
+                total_yes += price
+                total_spread_cost += spread
+                valid_markets.append((m, price, spread))
+
+            if len(valid_markets) < 2:
+                continue
+
+            deviation = total_yes - 1.0  # Positive = overpriced, negative = underpriced
+
+            # ── Buy-All-YES Arbitrage ──────────────────────────────────
+            # If brackets are collectively underpriced, buying all YES = guaranteed profit
+            # Sprint 27: 2x fee recovery on arb — each leg pays taker fee
+            total_fees = len(valid_markets) * 0.014 * 2
+            if deviation < -total_spread_cost and abs(deviation) > 0.02:
+                arb_edge = abs(deviation) - total_spread_cost - total_fees
+                if arb_edge < 0.005:
+                    continue  # Not worth the execution risk
+
+                # Emit one signal per bracket in the group
+                for m, price, spread in valid_markets:
+                    # Skip if this bracket's price is too extreme
+                    # Arb buys all brackets — use minimal floor (3c) to avoid dust
+                    if price < 0.03 or price > 0.93:
+                        continue
+                    signals.append(PipelineSignal(
+                        market_id=m["id"],
+                        signal_type="BRACKET_ARB",
+                        confidence=0.95,
+                        ev_estimate=round(arb_edge / len(valid_markets), 4),
+                        direction="YES",
+                        reasoning=(
+                            f"[ARB] Buy-all-YES: {len(valid_markets)} brackets, "
+                            f"sum={total_yes:.3f}, edge={arb_edge:.3f}, "
+                            f"event={event_id}"
+                        ),
+                        source_pipeline="crypto",
+                        category="crypto",
+                    ))
+
+            # ── Sprint 28: Targeted-NO arb DISABLED ──────────────────
+            # LT1-LT4 data: BRACKET_ARB targeted-NO lost $686 across 481
+            # positions. Small premiums (10-15c) with massive exposure (85-90c)
+            # = catastrophic risk/reward. Buy-all-YES arb above is retained.
+
+        if signals:
+            logger.info("Bracket arb scanner: %d arb signals from %d event groups",
+                        len(signals), len(event_groups))
+        return signals
+
     def _bracket_model_signals(
         self, target_markets: Dict[str, List[Dict]]
     ) -> List[PipelineSignal]:
@@ -1211,6 +1325,21 @@ class CryptoPipeline(BasePipeline):
         import math
         signals = []
         stats = {"scanned": 0, "no_price": 0, "no_bracket": 0, "low_edge": 0, "emitted": 0}
+
+        # Sprint 29: Load per-timeframe FLB rejection floors from config.
+        # BUG-007 fix: previously hard-coded 10c floor blocked all intraday/hourly
+        # markets. Config has granular floors (5c for 15-min, 10c hourly, etc.).
+        flb_reject_by_tf: dict = {}
+        flb_reject_default = 0.10  # Fallback if config missing
+        try:
+            from sibyl.core.config import load_yaml
+            policy = load_yaml("investment_policy_config.yaml")
+            crypto_profile = policy.get("per_category_risk_profiles", {}).get("crypto", {})
+            flb_cfg = crypto_profile.get("flb_config", {})
+            flb_reject_by_tf = flb_cfg.get("longshot_reject_by_timeframe", {})
+            flb_reject_default = float(flb_cfg.get("longshot_reject_below", 0.10))
+        except Exception:
+            pass
 
         for cg_id, markets in target_markets.items():
             cached = self._coin_cache.get(cg_id)
@@ -1305,23 +1434,75 @@ class CryptoPipeline(BasePipeline):
                 kalshi_spread = self._kalshi_spreads.get(market_id, 0.01)
                 half_spread = kalshi_spread / 2.0
 
-                edge_yes = model_prob - market_yes_price - half_spread
-                edge_no = (1.0 - model_prob) - (1.0 - market_yes_price) - half_spread
+                # Sprint 27: 2x fee recovery threshold — edge must exceed 2x the
+                # roundtrip fee to be positive EV. Taker-only, no maker rebate.
+                _fee_cost = 0.014 * 2  # 2.8% minimum edge after spread
+                edge_yes = model_prob - market_yes_price - half_spread - _fee_cost
+                edge_no = (1.0 - model_prob) - (1.0 - market_yes_price) - half_spread - _fee_cost
 
-                if edge_yes >= edge_no:
-                    edge = edge_yes
+                # ── Sprint 24: Favorite-Longshot Bias (FLB) filter ────────
+                # Research (300K+ Kalshi contracts): favorites >50c return
+                # +2.6% for makers; longshots <10c lose -60%.  Apply
+                # asymmetric edge scaling to bias toward the favorite side.
+                yes_implied = market_yes_price
+                no_implied = 1.0 - market_yes_price
+
+                # Determine FLB scaling per side
+                def _flb_scale(implied_price: float) -> float:
+                    """Return edge multiplier based on favorite-longshot bias.
+                    Favorites (>50c): 1.0–1.3x bonus.
+                    Longshots (<30c): 0.3–0.8x penalty.
+                    Mid-range: 1.0x (neutral)."""
+                    if implied_price >= 0.50:
+                        # Linear bonus: 1.0 at 50c → 1.3 at 90c+
+                        return 1.0 + min((implied_price - 0.50) * 0.75, 0.30)
+                    elif implied_price < 0.30:
+                        # Linear penalty: 0.8 at 30c → 0.3 at <5c
+                        return max(0.30, 0.80 - (0.30 - implied_price) * 2.0)
+                    return 1.0
+
+                adj_edge_yes = edge_yes * _flb_scale(yes_implied)
+                adj_edge_no = edge_no * _flb_scale(no_implied)
+
+                if adj_edge_yes >= adj_edge_no:
+                    edge = edge_yes          # Use raw edge for EV / sizing
                     direction = "YES"
+                    selected_implied = yes_implied
                 else:
                     edge = edge_no
                     direction = "NO"
+                    selected_implied = no_implied
 
-                if edge < self.BRACKET_MIN_EDGE:
+                # Sprint 29: Tiered FLB rejection — per-timeframe floors from config.
+                # Replaces hard 10c floor that blocked 97% of intraday/hourly markets.
+                flb_floor = float(flb_reject_by_tf.get(timeframe, flb_reject_default))
+                if selected_implied < flb_floor:
+                    stats["low_edge"] += 1   # Reuse counter for filtered
+                    continue
+
+                # Sprint 23A: Timeframe-scaled edge threshold — short-duration
+                # markets have compressed sigma_t, so use lower floors.
+                min_edge = self.BRACKET_MIN_EDGE_BY_TIMEFRAME.get(
+                    timeframe, self.BRACKET_MIN_EDGE
+                )
+                if edge < min_edge:
                     stats["low_edge"] += 1
                     continue
 
-                # ── Sprint 21 Phase 2: Enriched confidence ────────────────
-                # Base confidence scales with edge magnitude
-                confidence = min(0.55 + edge * 2.5, 0.95)
+                # ── Sprint 23: Timeframe-normalized confidence ──────────────
+                # Normalize edge relative to the timeframe's min threshold so
+                # a 0.5% edge on a 15-min market (min=0.5%) produces the same
+                # base confidence as 1.5% on monthly (min=1.5%).
+                # At 1× minimum edge → 0.61 (clears 0.60 router floor).
+                # At 2× minimum edge → 0.67.  At 5× → 0.85.
+                edge_ratio = edge / min_edge if min_edge > 0 else edge / 0.015
+                # Sprint 31: Sigmoid confidence mapping (auditor rec 3.1).
+                # Old linear formula saturated at 5x edge — 76.5% of LT7
+                # signals hit the 0.85 cap. Sigmoid spreads the range:
+                #   1x → 0.62, 2x → 0.69, 5x → 0.83, 10x → 0.93, 20x → 0.95
+                import math
+                _sigmoid = (1.0 - math.exp(-edge_ratio * 0.35)) / (1.0 + math.exp(-edge_ratio * 0.35))
+                confidence = min(0.55 + 0.40 * _sigmoid, 0.99)
 
                 # Adjustment 1: Order book imbalance confirms direction
                 # If we're betting YES (price goes up) and book is bid-heavy → boost
@@ -1361,9 +1542,32 @@ class CryptoPipeline(BasePipeline):
                     elif direction == "NO" and bracket_type == "below" and buy_pressure < 0.4:
                         pressure_adj = min((0.5 - buy_pressure) * 0.06, 0.02)
 
-                # Apply adjustments (capped total ±5% swing)
-                total_adj = max(-0.05, min(0.05, book_adj + funding_adj + pressure_adj))
-                confidence = max(0.50, min(0.95, confidence + total_adj))
+                # Adjustment 4: Kalshi-side OBI — direct market signal (Sprint 24)
+                # Research: OBI at 62% directional accuracy over 1-5 min.
+                # Weighted stronger for short-duration markets.
+                kalshi_obi_adj = 0.0
+                kalshi_obi = self._kalshi_obi.get(market_id, 0.0)
+                if abs(kalshi_obi) > 0.1:  # Ignore noise below 10%
+                    obi_weight = {"15min": 0.08, "hourly": 0.06, "4hour": 0.04}.get(timeframe, 0.03)
+                    obi_cap = {"15min": 0.04, "hourly": 0.03, "4hour": 0.02}.get(timeframe, 0.02)
+                    if direction == "YES" and kalshi_obi > 0:
+                        kalshi_obi_adj = min(kalshi_obi * obi_weight, obi_cap)
+                    elif direction == "NO" and kalshi_obi < 0:
+                        kalshi_obi_adj = min(abs(kalshi_obi) * obi_weight, obi_cap)
+                    elif direction == "YES" and kalshi_obi < -0.3:
+                        kalshi_obi_adj = -0.02  # Kalshi book contradicts our direction
+                    elif direction == "NO" and kalshi_obi > 0.3:
+                        kalshi_obi_adj = -0.02
+
+                # Sprint 31: Correlation discount (auditor rec 3.6).
+                # OBI, funding, pressure, Kalshi OBI are correlated — when all
+                # agree, discount by 30% to avoid inflating confidence on
+                # correlated microstructure noise.
+                raw_adj_sum = book_adj + funding_adj + pressure_adj + kalshi_obi_adj
+                n_positive = sum(1 for x in [book_adj, funding_adj, pressure_adj, kalshi_obi_adj] if x > 0.001)
+                correlation_discount = 1.0 - 0.10 * max(0, n_positive - 1)
+                total_adj = max(-0.05, min(0.05, raw_adj_sum * correlation_discount))
+                confidence = max(0.50, min(0.99, confidence + total_adj))
 
                 # Real EV: edge itself is the EV (probability points of mispricing)
                 ev_estimate = edge
@@ -1380,6 +1584,8 @@ class CryptoPipeline(BasePipeline):
                     enrich_parts.append(f"fund={avg_funding:+.4%}/{funding_adj:+.1%}")
                 if pressure_adj != 0:
                     enrich_parts.append(f"pres={buy_pressure:.0%}/{pressure_adj:+.1%}")
+                if kalshi_obi_adj != 0:
+                    enrich_parts.append(f"kobi={kalshi_obi:+.2f}/{kalshi_obi_adj:+.1%}")
                 enrich_str = f" | {' '.join(enrich_parts)}" if enrich_parts else ""
 
                 signals.append(PipelineSignal(
@@ -1398,6 +1604,7 @@ class CryptoPipeline(BasePipeline):
                         f"({mins_left:.0f}min left)"
                         f"{enrich_str}"
                     ),
+                    timeframe=timeframe,
                 ))
                 stats["emitted"] += 1
 

@@ -667,6 +667,42 @@ class KalshiClient:
             return data
         return {"market_positions": [], "cursor": None}
 
+    async def get_portfolio_value(self) -> dict[str, float] | None:
+        """Get complete portfolio value: cash + position exposure.
+
+        Sprint 25: The allocator needs to know total portfolio value (not just
+        cash) to correctly size positions and detect capital starvation.
+
+        Returns:
+            Dict with cash, position_exposure, total_value. None if not authenticated.
+        """
+        if not self.is_authenticated:
+            return None
+
+        cash = await self.get_balance()
+        if cash is None:
+            return None
+
+        # Paginate all unsettled positions
+        total_exposure = 0.0
+        cursor = None
+        while True:
+            data = await self.get_positions(
+                limit=100, cursor=cursor, settlement_status="unsettled"
+            )
+            positions = data.get("market_positions", [])
+            for p in positions:
+                total_exposure += float(p.get("market_exposure_dollars", 0))
+            cursor = data.get("cursor")
+            if not cursor or not positions:
+                break
+
+        return {
+            "cash": cash,
+            "position_exposure": total_exposure,
+            "total_value": cash + total_exposure,
+        }
+
     # ── Authenticated: Order Placement (requires API key) ─────────────
     # These methods actually PLACE TRADES on Kalshi.  Only called in live mode.
 
@@ -715,10 +751,13 @@ class KalshiClient:
             "count": size,
             "type": order_type,
         }
-        # Only include price for limit orders (market orders fill at best available)
-        if order_type == "limit":
-            body["yes_price"] = price_cents if side.lower() == "yes" else None
-            body["no_price"] = price_cents if side.lower() == "no" else None
+        # Kalshi always requires exactly one price field.
+        # For market buys, use 99¢ (most aggressive) to fill immediately.
+        buy_price = price_cents if order_type == "limit" else 99
+        if side.lower() == "yes":
+            body["yes_price"] = buy_price
+        else:
+            body["no_price"] = buy_price
 
         data = await self._post("/portfolio/orders", json_body=body)
         if isinstance(data, dict):
@@ -769,9 +808,16 @@ class KalshiClient:
             "count": size,
             "type": order_type,
         }
+        # Kalshi always requires exactly one price field.
+        # For market sells, use 1¢ (most aggressive) to fill immediately.
         if order_type == "limit" and price_cents is not None:
-            body["yes_price"] = price_cents if side.lower() == "yes" else None
-            body["no_price"] = price_cents if side.lower() == "no" else None
+            sell_price = price_cents
+        else:
+            sell_price = 1  # Market order: sell at any price
+        if side.lower() == "yes":
+            body["yes_price"] = sell_price
+        else:
+            body["no_price"] = sell_price
 
         data = await self._post("/portfolio/orders", json_body=body)
         if isinstance(data, dict):
@@ -822,4 +868,54 @@ class KalshiClient:
             logger.info("Order cancelled: %s", order_id)
             return data
         return None
+
+
+# ── Sprint 23D: Shared Client Singleton ──────────────────────────────
+# All agents share one KalshiClient with a single TieredRateLimiter.
+# This prevents 4 independent rate limiters from collectively exceeding
+# Kalshi's 30 read/s + 30 write/s budget (which caused 1,222 429s in
+# Live Test #2).
+
+import os as _os
+
+_shared_client: KalshiClient | None = None
+
+
+def get_shared_kalshi_client(config: dict | None = None) -> KalshiClient:
+    """Return the shared Kalshi client singleton.
+
+    Creates the client on first call using env vars for auth credentials.
+    All subsequent calls return the same instance — one rate limiter,
+    one HTTP connection pool, one auth session across all agents.
+
+    Args:
+        config: Optional system config dict with ``platforms.kalshi`` settings.
+                Only used on the first call to set tier/base_url.
+
+    Returns:
+        The shared KalshiClient instance.
+    """
+    global _shared_client
+    if _shared_client is not None:
+        return _shared_client
+
+    kalshi_cfg = (config or {}).get("platforms", {}).get("kalshi", {})
+    key_id = _os.environ.get("KALSHI_KEY_ID")
+    key_path = _os.environ.get("KALSHI_PRIVATE_KEY_PATH")
+    tier = kalshi_cfg.get("tier", "basic")
+    base_url = kalshi_cfg.get(
+        "base_url", "https://api.elections.kalshi.com/trade-api/v2"
+    )
+
+    _shared_client = KalshiClient(
+        key_id=key_id or None,
+        private_key_path=key_path or None,
+        base_url=base_url,
+        tier=tier,
+    )
+    logger.info(
+        "Shared Kalshi client created (tier=%s, auth=%s)",
+        tier, _shared_client.is_authenticated,
+    )
+    return _shared_client
 

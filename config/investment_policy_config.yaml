@@ -164,17 +164,17 @@ capital_caps:
     ace: 0.10
     combined: 0.25
   "Crypto & Digital Assets":
-    sge: 0.60                        # Sprint 20: crypto is the sole focus
+    sge: 0.95                        # Live test #2: near-full capital deployment
     ace: 0.00
-    combined: 0.60
+    combined: 0.95
   "Crypto":                          # Alias — pipeline uses lowercase category name
-    sge: 0.60
+    sge: 0.95
     ace: 0.00
-    combined: 0.60
+    combined: 0.95
   "crypto":                          # Alias — lowercase form from category_strategies
-    sge: 0.60
+    sge: 0.95
     ace: 0.00
-    combined: 0.60
+    combined: 0.95
   "Science & Technology":
     sge: 0.15
     ace: 0.15
@@ -388,23 +388,86 @@ approved_data_sources:
 per_category_risk_profiles:
   crypto:
     min_confidence: 0.60           # Sprint 22: stakeholder floor — educated bets at ≥60%
-    min_ev: 0.015                  # Sprint 22: lowered from 0.02 for more signal throughput
-    kelly_fraction: 0.30           # Sprint 22: aggressive Kelly for faster scaling (was 0.25)
-    max_position_pct: 0.08         # Sprint 22: 8% of engine capital per position (was 5%)
-    max_category_pct: 0.60         # 60% of engine capital in crypto total
+    min_ev: 0.005                  # Sprint 23: match 15-min edge floor (was 0.015)
+    kelly_fraction: 0.12           # Sprint 28: conservative Kelly. LT1-LT4: 1-3 contract
+                                   # positions (+30-60% ROI) vs 11+ contracts (-3.8% ROI).
+                                   # Edge estimates are overconfident. Was 0.30.
+    max_position_pct: 0.05         # Sprint 28: 5% per market. Was 12% — accumulation guard
+                                   # limits per-market exposure as % of capital.
+    max_category_pct: 0.95         # Live test #2: near-full capital deployment
     stop_loss_pct: 0.35            # Sprint 22: wider stops for volatile crypto (was 0.25)
     circuit_breaker_drawdown_pct: 0.25  # Sprint 22: -25% category drawdown (was -15%)
-    dedup_window_minutes: 5        # Fast dedup — crypto prices move every minute
-    pipeline_interval_seconds: 300 # 5-minute pipeline cycles
+    dedup_window_minutes: 2        # 2-min dedup — matches 60s pipeline cycle, prevents stale re-fires
+    pipeline_interval_seconds: 60  # 60s pipeline cycles — crypto brackets move fast
+    max_underlying_pct: 0.15       # Sprint 29: 15% max per underlying (BTC/ETH/SOL/XRP)
     market_horizon_days: 7         # Only trade markets closing within 7 days
+    # Sprint 29: Crypto calibration offset. Audit findings S-1 through S-7 show
+    # crypto confidence is overestimated 10-20% due to: normal CDF on fat-tailed
+    # assets, stacked confidence adjustments, degenerate sigma floor. Apply -0.10
+    # correction until auto-calibration agent can compute empirical offset.
+    calibration_offset: -0.10
     # Sprint 20.5: Always-On Bracket Trader parameters
-    bracket_min_edge: 0.015        # Sprint 22: 1.5-cent min edge (was 2 cents)
+    bracket_min_edge: 0.005        # Sprint 23: aligned with BRACKET_MIN_EDGE_BY_TIMEFRAME (15-min floor)
     target_assets:                 # Persistent participation assets
       - bitcoin
       - ethereum
       - solana
       - xrp
+    # Sprint 24: Favorite-Longshot Bias (FLB) — empirical Kalshi data
+    # Favorites (>50c) return +2.6% for makers; longshots (<10c) lose -60%.
+    # Sprint 24: Per-timeframe Kelly — Brier-tiered sizing.
+    # Conservative defaults until calibration data proves accuracy.
+    kelly_by_timeframe:
+      "15min":   0.07     # Sprint 28: 65% cut. LT data: oversizing is the #1 ROI killer.
+      "hourly":  0.10     # Avg win $2.09 vs avg loss $9.36 — Kelly must account for
+      "4hour":   0.12     # the true win/loss asymmetry, not the inflated edge estimate.
+      "daily":   0.12     # 1-3 contracts = +30-60% ROI, 11+ contracts = -3.8% ROI.
+      "monthly": 0.10     # Keep monthly conservative — longest horizon, most uncertainty.
+    flb_config:
+      longshot_reject_below: 0.30    # Sprint 29: Default floor for weekly/monthly.
+                                     # Per-timeframe floors override this — see below.
+      # Sprint 29: Tiered entry floor by timeframe. LT5 showed flat 50c floor
+      # blocked 97% of intraday/hourly markets. Short-timeframe brackets have
+      # naturally low prices (BTC 15-min avg 2.4c) — need granular floors.
+      longshot_reject_by_timeframe:
+        "15min":   0.05              # Narrow brackets, most volume at 1-10c
+        "hourly":  0.10              # Slightly wider; reject extreme longshots
+        "4hour":   0.15              # Moderate dispersion
+        "daily":   0.15              # End-of-day; 15c+ brackets have viable edge
+        "weekly":  0.30              # Friday close — LT4 data profitable here
+        "monthly": 0.30              # Widest brackets, most uncertainty
+      favorite_bonus_start: 0.50     # Start applying bonus above this price
+      favorite_bonus_max: 0.30       # Max edge multiplier bonus at 90c+
+      longshot_penalty_start: 0.50   # Penalty starts at 50c (was 0.30)
+      longshot_penalty_max: 0.70     # Max edge multiplier penalty at <5c
+    # Sprint 27: Taker-only execution — always cross the spread.
+    # "There are never market maker winners, only market taker winners."
+    # Kalshi taker fee: ~0.7% per side = 1.4% roundtrip on $1 contract.
+    fee_per_contract: 0.014
+    # Sprint 27: Edge must exceed fee_recovery_multiplier * fee to trade.
+    # At 2.0x, minimum edge = 2.8% net of spread (safety margin above raw fee).
+    fee_recovery_multiplier: 2.0
+    # Sprint 28: Minimum NO premium — only take NO when premium >= 50c.
+    # LT1-LT4 data: NO at 7-15c premium lost $686. NO at 85c+ won $1,311.
+    # Only NO trades with substantial premiums have positive expected value.
+    min_no_premium: 0.50
+    # Sprint 29: Dynamic contract cap by entry price. LT5 showed flat cap of 5
+    # limited all positions to $5 payout, capping profit at $0.75-$2.50.
+    # Lower-price entries have wider profit margin — allow more contracts.
+    # Higher-price entries (near 1.00) have thin margin — keep tight cap.
+    max_contracts_per_trade: 5       # Fallback if no price tier matches
+    max_contracts_by_entry_price:
+      # [max_price, max_contracts] — first matching tier wins (checked low→high)
+      - [0.20, 15]                   # 5c-20c: max payout $15, max profit $12-14
+      - [0.50, 10]                   # 20c-50c: max payout $10, max profit $5-8
+      - [0.70, 8]                    # 50c-70c: max payout $8, max profit $2.40-4.00
+      - [0.85, 6]                    # 70c-85c: max payout $6, max profit $0.90-1.80
+      - [1.00, 5]                    # 85c-93c: max payout $5, max profit $0.35-0.75
   # ── Locked categories (Sprint 20: disabled, profiles reserved for future use) ──
+  # Sprint 24: calibration_offset from research — additive confidence adjustment
+  # based on domain-specific calibration analysis (292M trades, Kalshi+Polymarket).
+  # Politics: underconfident (+0.15), Weather/Culture: overconfident (-0.09),
+  # Economics: well-calibrated (0.00).
   economics:
     min_confidence: 0.60
     min_ev: 0.03
@@ -416,7 +479,8 @@ per_category_risk_profiles:
     dedup_window_minutes: 240
     pipeline_interval_seconds: 900
     market_horizon_days: 14
-    locked: true                   # Sprint 20: disabled until further notice
+    calibration_offset: 0.00       # Well-calibrated domain
+    locked: true
   weather:
     min_confidence: 0.60
     min_ev: 0.03
@@ -428,6 +492,7 @@ per_category_risk_profiles:
     dedup_window_minutes: 120
     pipeline_interval_seconds: 900
     market_horizon_days: 7
+    calibration_offset: -0.09      # Overconfident — fade extreme prices
     locked: true
   sports:
     min_confidence: 0.65
@@ -440,6 +505,7 @@ per_category_risk_profiles:
     dedup_window_minutes: 30
     pipeline_interval_seconds: 600
     market_horizon_days: 7
+    calibration_offset: -0.05      # Slightly overconfident
     locked: true
   culture:
     min_confidence: 0.65
@@ -452,6 +518,7 @@ per_category_risk_profiles:
     dedup_window_minutes: 120
     pipeline_interval_seconds: 900
     market_horizon_days: 14
+    calibration_offset: -0.09      # Entertainment overconfident
     locked: true
   science:
     min_confidence: 0.60
@@ -464,6 +531,7 @@ per_category_risk_profiles:
     dedup_window_minutes: 360
     pipeline_interval_seconds: 1800
     market_horizon_days: 14
+    calibration_offset: 0.00       # Neutral
     locked: true
   financial:
     min_confidence: 0.60
@@ -476,6 +544,7 @@ per_category_risk_profiles:
     dedup_window_minutes: 60
     pipeline_interval_seconds: 900
     market_horizon_days: 14
+    calibration_offset: 0.00       # Neutral
     locked: true
   geopolitics:
     min_confidence: 0.85
@@ -488,6 +557,7 @@ per_category_risk_profiles:
     dedup_window_minutes: 120
     pipeline_interval_seconds: 1800
     market_horizon_days: 14
+    calibration_offset: 0.15       # Political markets underconfident — buy favorites
     locked: true
 
 # ── Multi-Category Market Resolution (Section 16) ────────────────────

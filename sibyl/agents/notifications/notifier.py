@@ -94,6 +94,14 @@ class Notifier(BaseAgent):
         self._last_circuit_sge: str = "CLEAR"
         self._last_circuit_ace: str = "CLEAR"
 
+        # Sprint 23D: ntfy.sh throttling — free tier allows 250 msg/day.
+        # Reserve headroom for critical alerts by budgeting daily sends.
+        self._daily_budget: int = 200  # Leave 50 for manual/critical
+        self._daily_sent: int = 0
+        self._budget_reset_hour: int = -1  # Hour of last reset
+        self._min_send_interval: float = 5.0  # Min seconds between sends
+        self._last_send_time: float = 0.0
+
     @property
     def poll_interval(self) -> float:
         """Poll every 10 seconds — fast enough for trading, light on DB."""
@@ -138,7 +146,7 @@ class Notifier(BaseAgent):
                 setattr(self, attr, int(row["value"]))
 
         self.logger.info(
-            "Notifier started → %s (cursors: signal=%d, position=%d)",
+            "Notifier started -> %s (cursors: signal=%d, position=%d)",
             self._ntfy_url, self._last_signal_id, self._last_position_id,
         )
 
@@ -173,7 +181,7 @@ class Notifier(BaseAgent):
             (self._last_signal_id,),
         )
         for row in rows:
-            title = f"Signal → {row['routed_to']}: {row['signal_type']}"
+            title = f"Signal -> {row['routed_to']}: {row['signal_type']}"
             body = (
                 f"{row['title']}\n"
                 f"Confidence: {float(row['confidence']):.0%} | "
@@ -230,7 +238,7 @@ class Notifier(BaseAgent):
             title = f"Position {verb}: {row['engine']} ({pnl_str})"
             body = (
                 f"{row['title']}\n"
-                f"{row['side']} | Entry: ${float(row['entry_price']):.2f} → "
+                f"{row['side']} | Entry: ${float(row['entry_price']):.2f} -> "
                 f"${float(row['current_price'] or 0):.2f} | P&L: {pnl_str}"
             )
             await self._send(title, body, event_type)
@@ -250,7 +258,7 @@ class Notifier(BaseAgent):
 
             # Only notify on state CHANGES (not every cycle)
             if current != prev and current in ("WARNING", "TRIGGERED"):
-                title = f"CIRCUIT BREAKER: {engine} → {current}"
+                title = f"CIRCUIT BREAKER: {engine} -> {current}"
                 body = f"The {engine} engine circuit breaker is now {current}."
                 await self._send(title, body, "circuit_breaker")
 
@@ -286,13 +294,9 @@ class Notifier(BaseAgent):
     async def _send(self, title: str, body: str, event_type: str) -> None:
         """Send a push notification via ntfy.sh HTTP POST.
 
-        ntfy.sh API:
-            POST https://ntfy.sh/<topic>
-            Headers:
-                Title:    Notification title
-                Priority: 1-5 (min to max)
-                Tags:     Comma-separated emoji names
-            Body:         Plain text message
+        Sprint 23D: Throttled to stay within ntfy.sh free tier (250 msg/day).
+        Critical alerts (priority 4-5) bypass the daily budget but still
+        respect the minimum send interval to avoid burst-rate limits.
 
         Args:
             title:      Notification title (shown as heading).
@@ -302,7 +306,33 @@ class Notifier(BaseAgent):
         if not self._http_client:
             return
 
+        import time as _time
+        from datetime import datetime, timezone, timedelta
+
+        # Reset daily budget at midnight PST
+        pst_now = datetime.now(timezone(timedelta(hours=-8)))
+        if pst_now.hour != self._budget_reset_hour and pst_now.hour == 0:
+            self._daily_sent = 0
+            self._budget_reset_hour = pst_now.hour
+
         priority = PRIORITY_MAP.get(event_type, "3")
+        is_critical = int(priority) >= 4
+
+        # Enforce daily budget (critical alerts bypass)
+        if not is_critical and self._daily_sent >= self._daily_budget:
+            self.logger.debug(
+                "ntfy budget exhausted (%d/%d) — dropping: %s",
+                self._daily_sent, self._daily_budget, title,
+            )
+            return
+
+        # Enforce minimum send interval
+        now = _time.monotonic()
+        if now - self._last_send_time < self._min_send_interval:
+            if not is_critical:
+                self.logger.debug("ntfy throttled (%.1fs interval) — dropping: %s",
+                                  self._min_send_interval, title)
+                return
         tags = TAG_MAP.get(event_type, "bell")
 
         try:
@@ -316,7 +346,10 @@ class Notifier(BaseAgent):
                 },
             )
             if resp.status_code == 200:
-                self.logger.debug("Notification sent: %s", title)
+                self._daily_sent += 1
+                self._last_send_time = _time.monotonic()
+                self.logger.debug("Notification sent (%d/%d today): %s",
+                                  self._daily_sent, self._daily_budget, title)
             else:
                 self.logger.warning(
                     "ntfy.sh returned %d: %s", resp.status_code, resp.text[:200],

@@ -97,8 +97,8 @@ class TestBasePipeline:
         assert ev > 0
 
     def test_compute_edge_no_edge(self):
-        """Data agrees with market → no edge."""
-        edge, direction, ev = BasePipeline._compute_edge(0.50, 0.50)
+        """Data agrees with market → no edge (fee=0 for pure math test)."""
+        edge, direction, ev = BasePipeline._compute_edge(0.50, 0.50, fee_per_contract=0.0)
         assert edge == pytest.approx(0.0, abs=0.001)
         assert ev == pytest.approx(0.0, abs=0.001)
 

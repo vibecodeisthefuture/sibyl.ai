@@ -79,7 +79,7 @@ notifications:
 # Each pipeline fetches external data and produces signals for the SignalRouter.
 pipeline:
   enabled: true
-  run_interval_seconds: 300       # 5 minutes — faster cycles for crypto focus
+  run_interval_seconds: 60        # 60s — crypto brackets move fast, every second counts
   categories: "crypto"            # SPRINT 20: Crypto-only pivot. All others disabled.
   correlation_engine: false       # Disabled — single category, no cross-correlation needed
   max_signals_per_run: 200        # Increased — crypto is the only pipeline running

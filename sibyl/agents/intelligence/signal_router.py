@@ -337,7 +337,7 @@ class SignalRouter(BaseAgent):
             else:
                 routed_count += 1
                 self.logger.info(
-                    "Signal #%d (%s [%s], tier=%s, conf=%.2f→%.2f, ev=%.3f) → %s%s",
+                    "Signal #%d (%s [%s], tier=%s, conf=%.2f->%.2f, ev=%.3f) -> %s%s",
                     signal_id, signal_type, category or "?",
                     policy_tier or "?",
                     raw_confidence, confidence, ev, destination,

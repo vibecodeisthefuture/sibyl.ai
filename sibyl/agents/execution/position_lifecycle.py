@@ -72,11 +72,11 @@ class PositionLifecycleManager(BaseAgent):
     or resolution), it places a sell order on Kalshi before updating the DB.
     """
 
-    def __init__(self, db: DatabaseManager, config: dict[str, Any]) -> None:
+    def __init__(self, db: DatabaseManager, config: dict[str, Any], mode: str = "paper") -> None:
         super().__init__(name="position_lifecycle", db=db, config=config)
         self._plc: dict[str, Any] = {}  # position_lifecycle_config.yaml
         self._kalshi_client = None       # Sprint 20.5: for LIVE sell orders
-        self._mode: str = "paper"        # paper or live
+        self._mode: str = mode           # Sprint 27: mode from system config, not credentials
 
         # Sub-routine cycle counters (each increments every 5s cycle)
         self._sub_counters: dict[str, int] = {
@@ -97,32 +97,29 @@ class PositionLifecycleManager(BaseAgent):
 
     async def start(self) -> None:
         """Load position lifecycle configuration and Kalshi client."""
-        import os
         from sibyl.core.config import load_yaml
         try:
             self._plc = load_yaml("position_lifecycle_config.yaml")
         except FileNotFoundError:
             self._plc = {}
 
-        # Sprint 20.5: Initialize Kalshi client for LIVE sell orders
-        # Uses the same env vars as OrderExecutor (KALSHI_KEY_ID, KALSHI_PRIVATE_KEY_PATH)
-        key_id = os.environ.get("KALSHI_KEY_ID")
-        key_path = os.environ.get("KALSHI_PRIVATE_KEY_PATH")
-        if key_id and key_path:
-            from sibyl.clients.kalshi_client import KalshiClient
-            tier = self.config.get("platforms", {}).get("kalshi", {}).get(
-                "tier", "basic"
-            )
-            self._kalshi_client = KalshiClient(
-                key_id=key_id,
-                private_key_path=key_path,
-                tier=tier,
-            )
-            self._mode = "live"
-            self.logger.info("Kalshi client initialized for LIVE position exits (tier=%s)", tier)
-        else:
+        # Sprint 27: Mode enforcement — system config is the single source of truth.
+        # Credentials alone do NOT upgrade paper to live.
+        from sibyl.clients.kalshi_client import get_shared_kalshi_client
+        shared = get_shared_kalshi_client(self.config)
+        if self._mode == "live" and shared.is_authenticated:
+            self._kalshi_client = shared
+            self.logger.info("Position Lifecycle using shared Kalshi client (LIVE mode)")
+        elif self._mode == "live" and not shared.is_authenticated:
+            self.logger.error("LIVE mode requested but Kalshi not authenticated — falling back to paper")
             self._mode = "paper"
-            self.logger.info("No Kalshi credentials — position exits are DB-only (paper mode)")
+        else:
+            self.logger.info("Position Lifecycle in PAPER mode — no Kalshi orders will be placed")
+
+        # Sprint 25: Full Kalshi-source reconciliation on startup in live mode.
+        # Ensures DB accurately reflects Kalshi reality before any trading.
+        if self._mode == "live" and self._kalshi_client:
+            await self._startup_reconciliation()
 
         self.logger.info("Position Lifecycle Manager started (5 sub-routines active, mode=%s)", self._mode)
 
@@ -159,15 +156,15 @@ class PositionLifecycleManager(BaseAgent):
         if cycle % max(corr_interval, 1) == 0:
             await self._sub_e_correlation_scanner()
 
-        # Sub-routine F: Position Reconciliation — every 15 min (Sprint 22)
-        recon_interval = int(15 * 60 / 5)  # 180 cycles
+        # Sub-routine F: Position Reconciliation — every 5 min (Sprint 23B:
+        # tightened from 15 min since async fill-and-forget can create orphans faster)
+        recon_interval = int(5 * 60 / 5)  # 60 cycles
         if cycle % recon_interval == 0 and self._mode == "live":
             await self._sub_f_position_reconciliation()
 
     async def stop(self) -> None:
-        """Shut down lifecycle manager and close Kalshi client."""
-        if self._kalshi_client:
-            await self._kalshi_client.close()
+        """Shut down lifecycle manager."""
+        # Don't close shared client — other agents may still need it
         self.logger.info("Position Lifecycle Manager stopped")
 
     # ── Sell Helper (Sprint 20.5) ─────────────────────────────────────
@@ -213,7 +210,9 @@ class PositionLifecycleManager(BaseAgent):
                     side, size, market_id, order_id, order_status, reason,
                 )
 
-                # Sprint 22: Verify sell fill with polling loop
+                # Sprint 23: Sell fill confirmation — 60s timeout (was 120s),
+                # 3s intervals (was 6s).  Sells need confirmation before marking
+                # position closed, but 120s was excessive for market orders.
                 import asyncio
                 actual_fill_price: float | None = None
                 fill_confirmed = order_status in ("executed", "filled")
@@ -223,9 +222,12 @@ class PositionLifecycleManager(BaseAgent):
                     if avg_price is not None:
                         actual_fill_price = float(avg_price) / 100.0
 
+                SELL_POLL_ATTEMPTS = 20
+                SELL_POLL_INTERVAL = 3  # seconds (total: 60s)
+
                 if not fill_confirmed:
-                    for attempt in range(5):
-                        await asyncio.sleep(2)
+                    for attempt in range(SELL_POLL_ATTEMPTS):
+                        await asyncio.sleep(SELL_POLL_INTERVAL)
                         try:
                             confirm = await self._kalshi_client.get_order(order_id)
                             if confirm and "order" in confirm:
@@ -236,8 +238,8 @@ class PositionLifecycleManager(BaseAgent):
                                     if avg_price is not None:
                                         actual_fill_price = float(avg_price) / 100.0
                                     self.logger.info(
-                                        "SELL CONFIRMED [%d/5]: %s fill_price=%.4f",
-                                        attempt + 1, order_id,
+                                        "SELL CONFIRMED [%d/%d]: %s fill_price=%.4f",
+                                        attempt + 1, SELL_POLL_ATTEMPTS, order_id,
                                         actual_fill_price or 0,
                                     )
                                     break
@@ -248,17 +250,34 @@ class PositionLifecycleManager(BaseAgent):
                                     return False, None
                         except Exception as e:
                             self.logger.warning(
-                                "Sell confirm attempt %d/5 failed for %s: %s",
-                                attempt + 1, order_id, e,
+                                "Sell confirm attempt %d/%d failed for %s: %s",
+                                attempt + 1, SELL_POLL_ATTEMPTS, order_id, e,
                             )
 
                 if not fill_confirmed:
                     self.logger.error(
-                        "SELL NOT FILLED after 10s: %s on %s (reason=%s) — "
+                        "SELL NOT FILLED after %ds: %s on %s (reason=%s) — "
                         "position remains open on Kalshi",
+                        SELL_POLL_ATTEMPTS * SELL_POLL_INTERVAL,
                         order_id, market_id, reason,
                     )
                     return False, None
+
+                # Sprint 29: Record sell execution with fee for accurate P&L tracking
+                sell_fee = size * 0.007  # 0.7% per contract sell-side
+                try:
+                    await self.db.execute(
+                        """INSERT INTO executions
+                           (signal_id, position_id, engine, platform, order_id,
+                            side, fill_price, size, order_type, fee_amount)
+                           VALUES (?, ?, ?, 'kalshi', ?, 'SELL', ?, ?, 'market', ?)""",
+                        (
+                            pos["signal_id"], pos["id"], pos["engine"],
+                            order_id, actual_fill_price or 0.0, float(size), sell_fee,
+                        ),
+                    )
+                except Exception:
+                    self.logger.debug("Failed to record sell execution for %s", market_id)
 
                 return True, actual_fill_price
             else:
@@ -385,6 +404,29 @@ class PositionLifecycleManager(BaseAgent):
                         engine, len(self._recent_stops[engine]), cb_window,
                     )
 
+        # Sprint 30-A: Auto-reset circuit breaker when the stop window expires.
+        # The trigger loop above only ever writes TRIGGERED; this block clears it
+        # once no stops remain inside the cb_window.
+        triggered = await self.db.fetchall(
+            "SELECT engine FROM engine_state WHERE circuit_breaker = 'TRIGGERED'"
+        )
+        for row in triggered:
+            eng = row["engine"]
+            now_ts = datetime.now(timezone.utc).timestamp()
+            cutoff = now_ts - (cb_window * 60)
+            self._recent_stops[eng] = [
+                t for t in self._recent_stops[eng] if t > cutoff
+            ]
+            if len(self._recent_stops[eng]) < cb_count:
+                await self.db.execute(
+                    "UPDATE engine_state SET circuit_breaker = 'CLEAR' WHERE engine = ?",
+                    (eng,),
+                )
+                self.logger.info(
+                    "Circuit breaker CLEARED for %s (window expired, stops in window: %d)",
+                    eng, len(self._recent_stops[eng]),
+                )
+
         await self.db.commit()
 
     # ── SUB-ROUTINE B: EV Monitor ─────────────────────────────────────
@@ -444,7 +486,7 @@ class PositionLifecycleManager(BaseAgent):
             ev_shift = abs(new_ev - old_ev)
             if ev_shift >= threshold:
                 self.logger.info(
-                    "EV SHIFT on position #%d (%s): %.3f → %.3f (Δ=%.3f)",
+                    "EV SHIFT on position #%d (%s): %.3f -> %.3f (delta=%.3f)",
                     pos["id"], engine, old_ev, new_ev, ev_shift,
                 )
 
@@ -453,11 +495,14 @@ class PositionLifecycleManager(BaseAgent):
     # ── SUB-ROUTINE C: Exit Optimizer ─────────────────────────────────
 
     async def _sub_c_exit_optimizer(self) -> None:
-        """Determine when to close profitable positions.
+        """Determine when to close positions.
 
-        Two exit triggers:
+        Three exit triggers:
         1. EV Capture: >80% of estimated profit has been realized → take profit.
         2. Momentum Stall: price hasn't moved >0.5% in 4 consecutive checks.
+        3. Time Decay (Sprint 26): market closes within N minutes AND position
+           is not in profit → exit to avoid settlement loss. LT3 showed
+           positions from 3+ weeks ago still open, accumulating losses.
 
         Sprint 20.5: Uses fresh prices from prices table and places sell
         orders on Kalshi before closing in DB.
@@ -465,11 +510,28 @@ class PositionLifecycleManager(BaseAgent):
         ev_capture_thresh = float(self._plc.get("exit_optimizer", {}).get(
             "ev_capture_threshold", 0.80
         ))
+        # Sprint 26: Time-based exit — close losing positions before settlement
+        expiry_exit_minutes = float(self._plc.get("exit_optimizer", {}).get(
+            "expiry_exit_minutes", 15
+        ))
+        # Sprint 29: Momentum stall exit — close positions with no price movement.
+        # Locks capital in stagnant markets until settlement.
+        stall_cycles = int(self._plc.get("exit_optimizer", {}).get(
+            "momentum_stall_cycles", 4
+        ))
+        stall_threshold = float(self._plc.get("exit_optimizer", {}).get(
+            "momentum_stall_threshold", 0.005
+        ))
+        # Sprint 31: Min holding period by timeframe (auditor rec 3.5).
+        min_hold_cfg = self._plc.get("exit_optimizer", {}).get("min_hold_seconds", {})
 
         positions = await self.db.fetchall(
-            """SELECT id, market_id, engine, side, size, entry_price,
-                      current_price, ev_current, signal_id
-               FROM positions WHERE status = 'OPEN'"""
+            """SELECT p.id, p.market_id, p.engine, p.side, p.size, p.entry_price,
+                      p.current_price, p.ev_current, p.signal_id, p.opened_at,
+                      s.timeframe
+               FROM positions p
+               LEFT JOIN signals s ON p.signal_id = s.id
+               WHERE p.status = 'OPEN'"""
         )
 
         for pos in positions:
@@ -510,6 +572,128 @@ class PositionLifecycleManager(BaseAgent):
                         "EXIT (EV capture %.0f%%): position #%d on %s (pnl=%.2f, sold=%s)",
                         capture_ratio * 100, pos["id"], pos["market_id"], pnl, sold,
                     )
+                    continue  # Already closed — skip time-decay check
+
+            # Sprint 26: Time-based exit — close losing positions nearing expiry.
+            # Markets approaching settlement converge to 0 or 100. Being on the
+            # wrong side near expiry means maximum loss. Exit early to limit damage.
+            if profit < 0:
+                mkt_row = await self.db.fetchone(
+                    "SELECT close_date FROM markets WHERE id = ?",
+                    (pos["market_id"],),
+                )
+                if mkt_row and mkt_row["close_date"]:
+                    try:
+                        close_dt = datetime.fromisoformat(
+                            mkt_row["close_date"].replace("Z", "+00:00")
+                        )
+                        mins_left = (close_dt - datetime.now(timezone.utc)).total_seconds() / 60
+                        if 0 < mins_left <= expiry_exit_minutes:
+                            sold, fill_price = await self._sell_on_kalshi(
+                                pos, reason="TIME_DECAY_EXIT"
+                            )
+                            exit_price = fill_price if fill_price else current
+                            pnl = self._compute_pnl_with_price(pos, exit_price)
+                            status = "CLOSED" if sold else "CLOSE_PENDING"
+                            await self.db.execute(
+                                """UPDATE positions SET
+                                     status = ?, pnl = ?, current_price = ?,
+                                     closed_at = CASE WHEN ? THEN datetime('now') ELSE closed_at END
+                                   WHERE id = ?""",
+                                (status, pnl, exit_price, sold, pos["id"]),
+                            )
+                            self.logger.info(
+                                "EXIT (time decay, %.0f min to close): position #%d on %s "
+                                "(pnl=%.2f, sold=%s)",
+                                mins_left, pos["id"], pos["market_id"], pnl, sold,
+                            )
+                    except (ValueError, TypeError):
+                        pass
+
+            # Sprint 31: Holding period minimum — skip momentum stall check if
+            # position hasn't been held long enough for its timeframe.
+            # Monthly positions stalling after 20s is not a true stall.
+            timeframe = pos["timeframe"] or "daily"
+            min_hold = float(min_hold_cfg.get(timeframe, 0))
+            if min_hold > 0 and pos["opened_at"]:
+                try:
+                    opened_dt = datetime.fromisoformat(pos["opened_at"])
+                    if opened_dt.tzinfo is None:
+                        opened_dt = opened_dt.replace(tzinfo=timezone.utc)
+                    held_seconds = (datetime.now(timezone.utc) - opened_dt).total_seconds()
+                    if held_seconds < min_hold:
+                        # Still within minimum hold — skip stall check entirely
+                        if current is not None:
+                            await self.db.execute(
+                                "INSERT OR REPLACE INTO system_state (key, value, updated_at) "
+                                "VALUES (?, ?, datetime('now'))",
+                                (f"stall_prev_price_{pos['id']}", str(current)),
+                            )
+                        continue
+                except (ValueError, TypeError):
+                    pass
+
+            # Sprint 29: Momentum stall exit — free capital from stagnant positions.
+            # Track consecutive cycles where price change < threshold.
+            # After N stall cycles, exit to redeploy capital productively.
+            stall_key = f"stall_count_{pos['id']}"
+            prev_price_key = f"stall_prev_price_{pos['id']}"
+            prev_row = await self.db.fetchone(
+                "SELECT value FROM system_state WHERE key = ?", (prev_price_key,)
+            )
+            prev_price = float(prev_row["value"]) if prev_row else None
+
+            if prev_price is not None and current is not None:
+                price_change = abs(current - prev_price)
+                if price_change < stall_threshold:
+                    # Increment stall counter
+                    count_row = await self.db.fetchone(
+                        "SELECT value FROM system_state WHERE key = ?", (stall_key,)
+                    )
+                    stall_count = int(count_row["value"]) + 1 if count_row else 1
+                    await self.db.execute(
+                        "INSERT OR REPLACE INTO system_state (key, value, updated_at) "
+                        "VALUES (?, ?, datetime('now'))",
+                        (stall_key, str(stall_count)),
+                    )
+                    if stall_count >= stall_cycles:
+                        sold, fill_price = await self._sell_on_kalshi(
+                            pos, reason="MOMENTUM_STALL"
+                        )
+                        exit_price = fill_price if fill_price else current
+                        pnl = self._compute_pnl_with_price(pos, exit_price)
+                        status = "CLOSED" if sold else "CLOSE_PENDING"
+                        await self.db.execute(
+                            """UPDATE positions SET
+                                 status = ?, pnl = ?, current_price = ?,
+                                 closed_at = CASE WHEN ? THEN datetime('now') ELSE closed_at END
+                               WHERE id = ?""",
+                            (status, pnl, exit_price, sold, pos["id"]),
+                        )
+                        self.logger.info(
+                            "EXIT (momentum stall, %d cycles): position #%d on %s "
+                            "(pnl=%.2f, sold=%s)",
+                            stall_count, pos["id"], pos["market_id"], pnl, sold,
+                        )
+                        # Clean up stall tracking keys
+                        await self.db.execute(
+                            "DELETE FROM system_state WHERE key IN (?, ?)",
+                            (stall_key, prev_price_key),
+                        )
+                        continue
+                else:
+                    # Price moved — reset stall counter
+                    await self.db.execute(
+                        "DELETE FROM system_state WHERE key = ?", (stall_key,),
+                    )
+
+            # Update previous price for next cycle's stall check
+            if current is not None:
+                await self.db.execute(
+                    "INSERT OR REPLACE INTO system_state (key, value, updated_at) "
+                    "VALUES (?, ?, datetime('now'))",
+                    (prev_price_key, str(current)),
+                )
 
         await self.db.commit()
 
@@ -586,7 +770,7 @@ class PositionLifecycleManager(BaseAgent):
                 )
 
                 self.logger.info(
-                    "RESOLVED: position #%d on %s → %s (correct=%s, pnl=%.2f, sold=%s)",
+                    "RESOLVED: position #%d on %s -> %s (correct=%s, pnl=%.2f, sold=%s)",
                     pos["id"], pos["market_id"], resolved_direction, correct, pnl, sold,
                 )
 
@@ -655,6 +839,151 @@ class PositionLifecycleManager(BaseAgent):
 
         await self.db.commit()
 
+    # ── Sprint 25: Startup Reconciliation ───────────────────────────
+
+    async def _startup_reconciliation(self) -> None:
+        """Full Kalshi-source position sync on startup.
+
+        Unlike sub-routine F (which runs periodically and finds ghosts/orphans),
+        this runs ONCE at startup and treats Kalshi as the source of truth.
+        It handles the case where the DB was populated by paper testing or
+        stale sessions.
+        """
+        try:
+            # Fetch ALL Kalshi positions (paginated)
+            all_kalshi: list[dict] = []
+            cursor = None
+            while True:
+                data = await self._kalshi_client.get_positions(
+                    limit=100, cursor=cursor, settlement_status="unsettled"
+                )
+                positions = data.get("market_positions", [])
+                all_kalshi.extend(positions)
+                cursor = data.get("cursor")
+                if not cursor or not positions:
+                    break
+
+            # Build ticker -> position map (only positions with actual exposure)
+            kalshi_by_ticker: dict[str, dict] = {}
+            for kp in all_kalshi:
+                ticker = kp.get("ticker", "")
+                exposure = float(kp.get("market_exposure_dollars", 0))
+                if ticker and exposure > 0:
+                    kalshi_by_ticker[ticker] = kp
+
+            # Fetch all DB OPEN positions
+            db_positions = await self.db.fetchall(
+                "SELECT id, market_id, side, size FROM positions "
+                "WHERE status IN ('OPEN', 'STOP_PENDING', 'CLOSE_PENDING') "
+                "AND platform = 'kalshi'"
+            )
+            db_tickers = {pos["market_id"] for pos in db_positions}
+
+            ghost_count = 0
+            orphan_count = 0
+            synced_count = 0
+
+            # Close DB positions that don't exist on Kalshi
+            for pos in db_positions:
+                if pos["market_id"] not in kalshi_by_ticker:
+                    await self.db.execute(
+                        "UPDATE positions SET status = 'GHOST_CLOSED', pnl = 0, "
+                        "closed_at = datetime('now') WHERE id = ?",
+                        (pos["id"],),
+                    )
+                    ghost_count += 1
+                else:
+                    synced_count += 1
+
+            # Create DB records for Kalshi positions missing from DB
+            for ticker, kp in kalshi_by_ticker.items():
+                if ticker not in db_tickers:
+                    pos_fp = float(kp.get("position_fp", 0))
+                    if pos_fp == 0:
+                        continue
+                    side = "YES" if pos_fp > 0 else "NO"
+                    size = abs(pos_fp)
+                    exposure = float(kp.get("market_exposure_dollars", 0))
+                    avg_price = exposure / size if size > 0 else 0.50
+
+                    await self.db.execute(
+                        "INSERT INTO positions "
+                        "(market_id, platform, engine, side, size, "
+                        "entry_price, current_price, stop_loss, "
+                        "status, signal_id, thesis) "
+                        "VALUES (?, 'kalshi', 'SGE', ?, ?, ?, ?, 0, "
+                        "'OPEN', NULL, 'STARTUP_SYNC: imported from Kalshi')",
+                        (ticker, side, size, round(avg_price, 4), round(avg_price, 4)),
+                    )
+                    orphan_count += 1
+
+            if ghost_count > 0 or orphan_count > 0:
+                await self.db.commit()
+
+            # Sprint 27: Enhanced settled-position reconciliation.
+            # Fetch recently settled Kalshi positions to properly record P&L
+            # for positions that settled while Sibyl was offline.
+            settled_count = 0
+            try:
+                settled_kalshi: list[dict] = []
+                s_cursor = None
+                while True:
+                    s_data = await self._kalshi_client.get_positions(
+                        limit=100, cursor=s_cursor, settlement_status="settled"
+                    )
+                    s_page = s_data.get("market_positions", []) if isinstance(s_data, dict) else []
+                    settled_kalshi.extend(s_page)
+                    s_cursor = s_data.get("cursor") if isinstance(s_data, dict) else None
+                    if not s_cursor or not s_page:
+                        break
+
+                # Cross-reference: DB OPEN positions that settled on Kalshi
+                for pos in db_positions:
+                    if pos["market_id"] in kalshi_by_ticker:
+                        continue  # Still active on Kalshi
+                    # Check if it's in the settled list with P&L info
+                    for sk in settled_kalshi:
+                        if sk.get("ticker") == pos["market_id"]:
+                            rpnl = float(sk.get("realized_pnl_dollars", 0))
+                            await self.db.execute(
+                                "UPDATE positions SET status = 'SETTLED', pnl = ?, "
+                                "closed_at = datetime('now') WHERE id = ? AND status != 'SETTLED'",
+                                (rpnl, pos["id"]),
+                            )
+                            settled_count += 1
+                            break
+            except Exception:
+                self.logger.debug("Settled position query failed — using fallback")
+
+            # Fallback: Mark remaining stale positions by checking market close dates
+            stale_open = await self.db.fetchall(
+                "SELECT p.id, p.market_id FROM positions p "
+                "LEFT JOIN markets m ON p.market_id = m.id "
+                "WHERE p.status = 'OPEN' AND p.platform = 'kalshi' "
+                "AND (m.close_date < datetime('now') OR m.status = 'closed')"
+            )
+            for sp in stale_open:
+                if sp["market_id"] not in kalshi_by_ticker:
+                    await self.db.execute(
+                        "UPDATE positions SET status = 'SETTLED', pnl = 0, "
+                        "closed_at = datetime('now') WHERE id = ?",
+                        (sp["id"],),
+                    )
+                    settled_count += 1
+
+            if settled_count > 0:
+                await self.db.commit()
+
+            self.logger.info(
+                "Startup reconciliation: %d Kalshi positions, %d synced, "
+                "%d ghosts closed, %d orphans imported, %d settled purged",
+                len(kalshi_by_ticker), synced_count, ghost_count, orphan_count,
+                settled_count,
+            )
+
+        except Exception:
+            self.logger.exception("Startup reconciliation failed")
+
     # ── SUB-ROUTINE F: Position Reconciliation (Sprint 22) ──────────
 
     async def _sub_f_position_reconciliation(self) -> None:
@@ -676,25 +1005,34 @@ class PositionLifecycleManager(BaseAgent):
             return
 
         try:
-            # Fetch actual Kalshi positions
-            positions_data = await self._kalshi_client.get_positions(
-                settlement_status="unsettled"
-            )
-            if isinstance(positions_data, dict):
-                kalshi_positions = positions_data.get("market_positions", [])
-            elif isinstance(positions_data, list):
-                kalshi_positions = positions_data
-            else:
-                self.logger.warning("Position reconciliation: unexpected response type")
-                return
+            # Sprint 27: Paginated fetch — handles accounts with >100 positions.
+            # Previously only fetched first page (100 positions), missing orphans.
+            kalshi_positions: list[dict] = []
+            cursor = None
+            while True:
+                positions_data = await self._kalshi_client.get_positions(
+                    limit=100, cursor=cursor, settlement_status="unsettled"
+                )
+                if isinstance(positions_data, dict):
+                    page = positions_data.get("market_positions", [])
+                    kalshi_positions.extend(page)
+                    cursor = positions_data.get("cursor")
+                    if not cursor or not page:
+                        break
+                elif isinstance(positions_data, list):
+                    kalshi_positions = positions_data
+                    break
+                else:
+                    self.logger.warning("Position reconciliation: unexpected response type")
+                    return
 
-            # Build set of Kalshi ticker → position data
+            # Build set of Kalshi ticker -> position data
             kalshi_by_ticker: dict[str, dict] = {}
             for kp in kalshi_positions:
                 if isinstance(kp, dict):
                     ticker = kp.get("ticker") or kp.get("market_ticker", "")
-                    total = kp.get("total_traded", 0)
-                    if ticker and total > 0:
+                    exposure = float(kp.get("market_exposure_dollars", 0))
+                    if ticker and exposure > 0:
                         kalshi_by_ticker[ticker] = kp
 
             # Fetch DB open/pending positions
@@ -795,25 +1133,38 @@ class PositionLifecycleManager(BaseAgent):
 
     @staticmethod
     def _compute_pnl(pos: Any) -> float:
-        """Compute realized P&L for a position using stored current_price."""
+        """Compute realized P&L for a position using stored current_price.
+
+        Sprint 29: Includes roundtrip fee deduction (buy + sell side).
+        Kalshi taker fee ~0.7c per contract per side = 1.4c roundtrip.
+        """
         current = float(pos["current_price"]) if pos["current_price"] else 0
         entry = float(pos["entry_price"])
         size = float(pos["size"])
+        fee = size * 0.014  # Roundtrip fee (0.7% buy + 0.7% sell)
         if pos["side"] == "YES":
-            return (current - entry) * size
+            return (current - entry) * size - fee
         else:
-            return (entry - current) * size
+            return (entry - current) * size - fee
 
     @staticmethod
-    def _compute_pnl_with_price(pos: Any, current_price: float) -> float:
+    def _compute_pnl_with_price(
+        pos: Any, current_price: float, is_settlement: bool = False
+    ) -> float:
         """Compute realized P&L using an explicit current price.
 
         Sprint 20.5: Used by sub-routines that have already fetched a fresh
         price from the prices table, avoiding use of the stale stored value.
+
+        Sprint 29: Fee-adjusted P&L. Settlement exits pay only buy-side fee
+        (no sell transaction). Active sells pay roundtrip fee.
         """
         entry = float(pos["entry_price"])
         size = float(pos["size"])
+        # Buy-side fee always applies; sell-side only on active exits
+        fee_per_side = 0.007  # 0.7% per contract per side
+        fee = size * fee_per_side * (1 if is_settlement else 2)
         if pos["side"] == "YES":
-            return (current_price - entry) * size
+            return (current_price - entry) * size - fee
         else:
-            return (entry - current_price) * size
+            return (entry - current_price) * size - fee

@@ -122,7 +122,16 @@ def setup_logging(
     root_logger.handlers.clear()  # Remove any existing handlers to avoid duplicates
 
     # Console handler — human-readable colored output to stdout
-    console = logging.StreamHandler(sys.stdout)
+    # Sprint 25: Force UTF-8 on Windows to prevent cp1252 codec errors
+    # from silently suppressing exception tracebacks.
+    import io
+    if sys.platform == "win32" and hasattr(sys.stdout, "buffer"):
+        console_stream = io.TextIOWrapper(
+            sys.stdout.buffer, encoding="utf-8", errors="replace"
+        )
+    else:
+        console_stream = sys.stdout
+    console = logging.StreamHandler(console_stream)
     console.setLevel(log_level)
     console.setFormatter(ConsoleFormatter())
     root_logger.addHandler(console)

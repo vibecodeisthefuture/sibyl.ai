@@ -38,7 +38,6 @@ POLLING: Every 60 seconds (configurable).
 from __future__ import annotations
 
 import logging
-import os
 import time
 from typing import Any
 
@@ -139,24 +138,16 @@ class PortfolioAllocator(BaseAgent):
         self._balance_sync_interval = float(bsync.get("sync_interval_seconds", 120))
         self._discrepancy_alert_pct = float(bsync.get("discrepancy_alert_pct", 0.02))
 
-        # ── Initialize Kalshi client for live balance sync ───────────────
+        # ── Sprint 23D: Use shared Kalshi client ─────────────────────────
         if self._mode == "live":
-            from sibyl.clients.kalshi_client import KalshiClient
-            key_id = os.environ.get("KALSHI_KEY_ID")
-            key_path = os.environ.get("KALSHI_PRIVATE_KEY_PATH")
-            if key_id and key_path:
-                tier = self.config.get("platforms", {}).get("kalshi", {}).get(
-                    "tier", "basic"
-                )
-                self._kalshi_client = KalshiClient(
-                    key_id=key_id,
-                    private_key_path=key_path,
-                    tier=tier,
-                )
-                self.logger.info("Kalshi client initialized for live balance sync (tier=%s)", tier)
+            from sibyl.clients.kalshi_client import get_shared_kalshi_client
+            shared = get_shared_kalshi_client(self.config)
+            if shared.is_authenticated:
+                self._kalshi_client = shared
+                self.logger.info("Portfolio Allocator using shared Kalshi client")
             else:
                 self.logger.warning(
-                    "Live mode but KALSHI_KEY_ID / KALSHI_PRIVATE_KEY_PATH not set — "
+                    "Live mode but Kalshi credentials not set — "
                     "falling back to paper balance"
                 )
 
@@ -210,6 +201,23 @@ class PortfolioAllocator(BaseAgent):
         reserve = total_balance * self._cash_reserve_pct
         allocable = total_balance - reserve
 
+        # Sprint 25: In live mode, cap allocable by actual Kalshi cash.
+        # total_balance includes position exposure, but we can only deploy
+        # what's actually available as cash on Kalshi.
+        if self._mode == "live":
+            cash_row = await self.db.fetchone(
+                "SELECT value FROM system_state WHERE key = 'portfolio_cash_available'"
+            )
+            if cash_row:
+                actual_cash = float(cash_row["value"])
+                cash_allocable = max(actual_cash - reserve, 0.0)
+                if cash_allocable < allocable:
+                    self.logger.debug(
+                        "Cash cap: allocable $%.2f -> $%.2f (cash=$%.2f, exposure locked)",
+                        allocable, cash_allocable, actual_cash,
+                    )
+                    allocable = cash_allocable
+
         # ── Step 3: Compute target allocation per engine ─────────────────
         targets: dict[str, float] = {}
         for engine, split in self._splits.items():
@@ -226,7 +234,7 @@ class PortfolioAllocator(BaseAgent):
                 # First allocation — set directly to target
                 await self._set_engine_total(engine, target)
                 self.logger.info(
-                    "INITIAL ALLOCATION: %s → $%.2f (%.0f%% of $%.2f)",
+                    "INITIAL ALLOCATION: %s -> $%.2f (%.0f%% of $%.2f)",
                     engine, target, self._splits[engine] * 100, allocable,
                 )
                 self._last_rebalance_ts = now
@@ -246,7 +254,7 @@ class PortfolioAllocator(BaseAgent):
                 self._last_rebalance_ts = now
 
                 self.logger.info(
-                    "REBALANCE: %s $%.2f → $%.2f (drift=%.1f%%, delta=$%.2f)",
+                    "REBALANCE: %s $%.2f -> $%.2f (drift=%.1f%%, delta=$%.2f)",
                     engine, current, new_total, drift * 100, capped_delta,
                 )
             elif drift <= self._drift_threshold:
@@ -356,69 +364,101 @@ class PortfolioAllocator(BaseAgent):
         return await self._get_paper_balance()
 
     async def _get_paper_balance(self) -> float:
-        """Compute paper balance: starting balance + realized P&L.
+        """Compute paper balance, anchored to real Kalshi balance when available.
 
-        This is a simple model: you start with $X and all closed positions
-        add/subtract from that balance.
+        Sprint 31 (B-NEW-3): Old formula summed ALL historical closed-position
+        P&L across sessions, inflating balance ~12x. Now:
+          1. Seed from cached Kalshi balance if available (Option C from audit).
+          2. Hard-cap at 150% of real Kalshi cash to prevent cross-session drift.
+          3. Fall back to config paper_starting_balance only if no Kalshi data.
         """
-        # Sum all realized P&L from closed/stopped positions
-        row = await self.db.fetchone(
-            """SELECT COALESCE(SUM(pnl), 0) as total_pnl
-               FROM positions WHERE status IN ('CLOSED', 'STOPPED')"""
+        # Try to anchor to actual Kalshi balance
+        kalshi_row = await self.db.fetchone(
+            "SELECT value FROM system_state WHERE key = 'portfolio_cash_available'"
         )
-        realized_pnl = float(row["total_pnl"]) if row else 0.0
-        return self._paper_balance + realized_pnl
+        if kalshi_row:
+            kalshi_cash = float(kalshi_row["value"])
+            # Use Kalshi cash as the base, plus exposure
+            exposure_row = await self.db.fetchone(
+                "SELECT value FROM system_state WHERE key = 'portfolio_position_exposure'"
+            )
+            exposure = float(exposure_row["value"]) if exposure_row else 0.0
+            real_total = kalshi_cash + exposure
+            # Hard cap: never exceed 150% of real total (auditor rec 3.3)
+            return min(self._paper_balance, real_total * 1.5) if real_total > 0 else self._paper_balance
+
+        # No Kalshi data — use config starting balance (no cross-session accumulation)
+        return self._paper_balance
 
     async def _get_live_balance(self) -> float:
-        """Fetch real Kalshi balance, with rate-limiting and discrepancy checks.
+        """Fetch real Kalshi portfolio value (cash + position exposure).
 
-        Returns the cached tracked balance if the sync interval hasn't elapsed.
-        On successful sync, checks for discrepancies between Kalshi's balance
-        and Sibyl's tracked total (could indicate external deposit/withdrawal).
+        Sprint 25: Uses get_portfolio_value() to track both cash and exposure.
+        Writes three keys to system_state:
+            portfolio_cash_available   — actual Kalshi cash (for balance gate)
+            portfolio_position_exposure — capital locked in open positions
+            portfolio_total_balance     — cash + exposure (for HWM / drawdown)
+
+        The ALLOCATOR uses cash_available to cap engine budgets.
+        The RISK DASHBOARD uses total_balance for drawdown tracking.
+        The EXECUTOR reads cash_available for pre-execution balance gate.
         """
         now = time.monotonic()
 
-        # Rate-limit balance API calls
+        # Rate-limit API calls
         if (now - self._last_balance_sync_ts) < self._balance_sync_interval:
-            # Use tracked balance from system_state
             row = await self.db.fetchone(
                 "SELECT value FROM system_state WHERE key = 'portfolio_total_balance'"
             )
             if row:
                 return float(row["value"])
-            # Fallback to paper balance if no tracked balance yet
-            return await self._get_paper_balance()
+            # Sprint 30-B: No cached value yet — return safe starting balance
+            # rather than _get_paper_balance() which accumulates cross-session P&L.
+            return self._paper_balance
 
-        # Sync with Kalshi
+        # Sync with Kalshi — full portfolio value
         try:
-            kalshi_balance = await self._kalshi_client.get_balance()
+            pv = await self._kalshi_client.get_portfolio_value()
             self._last_balance_sync_ts = now
 
-            if kalshi_balance is None:
-                self.logger.warning("Kalshi balance sync returned None — using tracked")
+            if pv is None:
+                self.logger.warning("Kalshi portfolio sync returned None — using tracked")
                 return await self._get_paper_balance()
 
-            # Check for discrepancy with tracked balance
-            tracked_row = await self.db.fetchone(
-                "SELECT value FROM system_state WHERE key = 'portfolio_total_balance'"
-            )
-            if tracked_row:
-                tracked = float(tracked_row["value"])
-                if tracked > 0:
-                    discrepancy = abs(kalshi_balance - tracked) / tracked
-                    if discrepancy > self._discrepancy_alert_pct:
-                        self.logger.warning(
-                            "BALANCE DISCREPANCY: Kalshi=$%.2f, Tracked=$%.2f (%.1f%% diff) "
-                            "— possible external deposit/withdrawal",
-                            kalshi_balance, tracked, discrepancy * 100,
-                        )
+            cash = pv["cash"]
+            exposure = pv["position_exposure"]
+            total = pv["total_value"]
 
-            self.logger.debug("Kalshi balance synced: $%.2f", kalshi_balance)
-            return kalshi_balance
+            # Write all three values to system_state
+            for key, val in [
+                ("portfolio_cash_available", cash),
+                ("portfolio_position_exposure", exposure),
+                ("portfolio_total_balance", total),
+            ]:
+                await self.db.execute(
+                    "INSERT INTO system_state (key, value, updated_at) "
+                    "VALUES (?, ?, datetime('now')) "
+                    "ON CONFLICT(key) DO UPDATE SET value = ?, updated_at = datetime('now')",
+                    (key, str(round(val, 2)), str(round(val, 2))),
+                )
+            await self.db.commit()
+
+            self.logger.debug(
+                "Portfolio sync: cash=$%.2f, exposure=$%.2f, total=$%.2f",
+                cash, exposure, total,
+            )
+            return total
 
         except Exception:
-            self.logger.exception("Failed to sync Kalshi balance — using tracked")
-            return await self._get_paper_balance()
+            self.logger.exception("Failed to sync Kalshi portfolio — using tracked")
+            # Sprint 30-B: Prefer cached system_state over _get_paper_balance()
+            # to avoid returning inflated cross-session P&L accumulation.
+            cached = await self.db.fetchone(
+                "SELECT value FROM system_state WHERE key = 'portfolio_total_balance'"
+            )
+            if cached:
+                return float(cached["value"])
+            return self._paper_balance
 
     # ── Engine State Helpers ───────────────────────────────────────────
 

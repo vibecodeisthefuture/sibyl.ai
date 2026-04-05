@@ -66,12 +66,26 @@ import asyncio
 import logging
 import signal
 import sys
+from datetime import datetime, timezone, timedelta
 
 from sibyl.core.config import SibylConfig
 from sibyl.core.database import DatabaseManager
 from sibyl.core.logging import setup_logging
 
 logger = logging.getLogger("sibyl")
+
+# ── PST Timezone (UTC-8) ────────────────────────────────────────────────
+PST = timezone(timedelta(hours=-8))
+
+
+def log_startup_timestamp() -> str:
+    """Log the engine start time in PST and return the formatted string."""
+    now_pst = datetime.now(PST)
+    stamp = now_pst.strftime("%Y-%m-%d %H:%M:%S PST")
+    print(f"\n{'='*60}")
+    print(f"  Sibyl.ai Engine Start: {stamp}")
+    print(f"{'='*60}\n")
+    return stamp
 
 
 async def main(args: argparse.Namespace) -> None:
@@ -85,13 +99,17 @@ async def main(args: argparse.Namespace) -> None:
         5. Waits for shutdown signal (Ctrl+C or SIGTERM)
         6. Gracefully stops all agents and closes the database
     """
+    # ── Step 0: Startup timestamp (PST) ───────────────────────────────
+    startup_stamp = log_startup_timestamp()
+
     # ── Step 1: Load all configuration ────────────────────────────────
     config = SibylConfig()
     setup_logging(config.system.get("system", {}).get("log_level", "INFO"))
     logger.info(
-        "Sibyl.ai v%s starting (mode=%s)",
+        "Sibyl.ai v%s starting (mode=%s) at %s",
         config.system.get("system", {}).get("version", "0.1.0"),
         config.mode,
+        startup_stamp,
     )
 
     # ── Step 2: Initialize database ───────────────────────────────────
@@ -99,9 +117,44 @@ async def main(args: argparse.Namespace) -> None:
     await db.initialize()
     logger.info("Database ready at %s (WAL=%s)", config.db_path, await db.get_wal_mode())
 
+    # ── Step 2.5: Mode transition guard (Sprint 25) ────────────────────
+    # When switching from paper to live, reset stale DB state so
+    # allocator/risk dashboard start fresh from Kalshi API values.
+    if config.mode == "live":
+        last_mode_row = await db.fetchone(
+            "SELECT value FROM system_state WHERE key = 'last_mode'"
+        )
+        prev_mode = last_mode_row["value"] if last_mode_row else "paper"
+        if prev_mode != "live":
+            logger.info("MODE TRANSITION: %s -> live — resetting stale DB state", prev_mode)
+            # Clear HWM so risk dashboard picks up real portfolio value
+            await db.execute(
+                "DELETE FROM system_state WHERE key IN "
+                "('risk_hwm', 'portfolio_total_balance', 'portfolio_cash_available', "
+                "'portfolio_position_exposure')"
+            )
+            # Reset engine allocations — allocator will re-seed from Kalshi
+            await db.execute(
+                "UPDATE engine_state SET total_capital = 0, deployed_capital = 0, "
+                "available_capital = 0"
+            )
+            await db.commit()
+        # Record current mode
+        await db.execute(
+            "INSERT INTO system_state (key, value, updated_at) "
+            "VALUES ('last_mode', 'live', datetime('now')) "
+            "ON CONFLICT(key) DO UPDATE SET value = 'live', updated_at = datetime('now')"
+        )
+        await db.commit()
+
     # ── Step 3: Create agents ─────────────────────────────────────────
     agents = []
     agent_scope = args.agents if hasattr(args, "agents") else "all"
+
+    # Sprint 29: Resolve trade_mode once. CLI --mode takes priority;
+    # if not specified, fall back to system_config.yaml mode field.
+    trade_mode = args.mode if (hasattr(args, "mode") and args.mode) else config.mode
+    logger.info("Trade mode resolved: %s (CLI=%s, config=%s)", trade_mode, getattr(args, "mode", None), config.mode)
 
     if agent_scope in ("monitor", "all"):
         # Import agents here (not at top of file) to avoid circular imports
@@ -149,7 +202,6 @@ async def main(args: argparse.Namespace) -> None:
         from sibyl.agents.sge.blitz_scanner import BlitzScanner
         from sibyl.agents.sge.blitz_executor import BlitzExecutor
 
-        trade_mode = args.mode if hasattr(args, "mode") else "paper"
         agents.append(BlitzScanner(db=db, config=config.system))
         agents.append(BlitzExecutor(db=db, config=config.system, mode=trade_mode))
 
@@ -159,9 +211,8 @@ async def main(args: argparse.Namespace) -> None:
         from sibyl.agents.execution.position_lifecycle import PositionLifecycleManager
         from sibyl.agents.execution.engine_state_manager import EngineStateManager
 
-        trade_mode = args.mode if hasattr(args, "mode") else "paper"
         agents.append(OrderExecutor(db=db, config=config.system, mode=trade_mode))
-        agents.append(PositionLifecycleManager(db=db, config=config.system))
+        agents.append(PositionLifecycleManager(db=db, config=config.system, mode=trade_mode))
         agents.append(EngineStateManager(db=db, config=config.system))
 
     # Portfolio & Risk Management layer agents (Sprint 4)
@@ -170,9 +221,11 @@ async def main(args: argparse.Namespace) -> None:
         from sibyl.agents.analytics.risk_dashboard import RiskDashboard
         from sibyl.agents.notifications.notifier import Notifier
 
-        trade_mode = args.mode if hasattr(args, "mode") else "paper"
+        from sibyl.agents.analytics.auto_calibrator import AutoCalibrator
+
         agents.append(PortfolioAllocator(db=db, config=config.system, mode=trade_mode))
         agents.append(RiskDashboard(db=db, config=config.system))
+        agents.append(AutoCalibrator(db=db, config=config.system))
         agents.append(Notifier(db=db, config=config.system))
 
     # Advanced Intelligence layer agents (Sprint 7+8)
@@ -264,8 +317,8 @@ def cli() -> None:
         description="Sibyl.ai — Prediction Market Investing System"
     )
     parser.add_argument(
-        "--mode", choices=["paper", "live"], default="paper",
-        help="Trading mode: 'paper' (simulated) or 'live' (real money). Default: paper."
+        "--mode", choices=["paper", "live"], default=None,
+        help="Trading mode: 'paper' (simulated) or 'live' (real money). Default: from system_config.yaml."
     )
     parser.add_argument(
         "--agents",

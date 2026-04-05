@@ -14,7 +14,7 @@ LIFECYCLE:
 
 CONFIGURATION:
     The agent reads poll_interval from config['pipeline.run_interval_seconds']
-    (default 900 seconds = 15 minutes).
+    (default 60 seconds for crypto-focused trading).
 
     Optional categories filter (from config['pipeline.categories']):
       - 'all' or omitted: Run all pipelines

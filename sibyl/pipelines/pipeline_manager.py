@@ -58,7 +58,7 @@ logger = logging.getLogger("sibyl.pipelines.manager")
 # ── Per-pipeline timeout (seconds) ──────────────────────────────────────
 # No single pipeline should block the entire run.  If a data source is
 # down or slow, we timeout and move on.
-PIPELINE_RUN_TIMEOUT = 600.0  # 600s max per pipeline run — API calls can be slow
+PIPELINE_RUN_TIMEOUT = 90.0   # 90s max — allows overlap with seed_markets bulk inserts
 PIPELINE_INIT_TIMEOUT = 15.0  # 15s max per pipeline init
 
 

@@ -55,6 +55,7 @@ class PipelineSignal:
     source_pipeline: str = ""         # Which pipeline generated this
     data_points: dict[str, Any] = field(default_factory=dict)  # Raw data for audit
     category: str = ""                # Market category
+    timeframe: str = ""               # Sprint 24: 15min/hourly/4hour/daily/monthly
 
 
 # ── Base Pipeline ────────────────────────────────────────────────────────
@@ -235,8 +236,26 @@ class BasePipeline(ABC):
 
     def _validate_signals(self, signals: list[PipelineSignal]) -> list[PipelineSignal]:
         """Filter out invalid or low-quality signals."""
+        # Sprint 24: Load calibration offset for this category.
+        # Research: domain-specific biases (politics +0.15 underconfident,
+        # weather/culture -0.09 overconfident, economics 0.00).
+        calibration_offset = 0.0
+        try:
+            from sibyl.core.config import load_yaml
+            policy = load_yaml("investment_policy_config.yaml")
+            profiles = policy.get("per_category_risk_profiles", {})
+            cat_key = self.CATEGORY.lower() if self.CATEGORY else ""
+            profile = profiles.get(cat_key, profiles.get(self.CATEGORY, {}))
+            calibration_offset = float(profile.get("calibration_offset", 0.0))
+        except Exception:
+            pass
+
         valid = []
         for sig in signals:
+            # Apply domain calibration offset
+            if calibration_offset != 0.0:
+                sig.confidence += calibration_offset
+
             # Enforce confidence bounds
             sig.confidence = max(0.0, min(sig.confidence, 0.99))
 
@@ -256,33 +275,53 @@ class BasePipeline(ABC):
         return valid
 
     async def _write_signals(self, signals: list[PipelineSignal]) -> int:
-        """Write validated signals to the signals table."""
+        """Write validated signals to the signals table.
+
+        Sprint 24: Batch dedup — pre-fetch open positions and recent signals
+        in two queries instead of 2 × N individual lookups.  Reduces DB
+        round-trips from ~9000 to ~N+2 for a typical 3000-signal batch.
+        """
+        if not signals:
+            return 0
+
+        # ── Batch dedup: pre-fetch open position market_ids ──────────
+        open_rows = await self._db.fetchall(
+            "SELECT DISTINCT market_id FROM positions WHERE status = 'OPEN'"
+        )
+        open_market_ids: set[str] = {row["market_id"] for row in open_rows}
+
+        # ── Batch dedup: pre-fetch recent signals within dedup window ─
+        dedup_minutes = self.DEDUP_WINDOW_MINUTES
+        recent_rows = await self._db.fetchall(
+            """SELECT market_id, signal_type FROM signals
+               WHERE source_pipeline = ?
+                 AND timestamp >= datetime('now', ? || ' minutes')""",
+            (self.PIPELINE_NAME, f"-{dedup_minutes}"),
+        )
+        recent_keys: set[tuple[str, str]] = {
+            (row["market_id"], row["signal_type"]) for row in recent_rows
+        }
+
+        # ── Filter and batch insert ──────────────────────────────────
         written = 0
+        skipped_open = 0
+        skipped_dedup = 0
         for sig in signals:
             try:
-                # Check for duplicate recent signal on same market
-                # Uses per-category dedup window (Sprint 16 tuning)
-                dedup_minutes = self.DEDUP_WINDOW_MINUTES
-                existing = await self._db.fetchone(
-                    """SELECT id FROM signals
-                       WHERE market_id = ?
-                         AND signal_type = ?
-                         AND timestamp >= datetime('now', ? || ' minutes')""",
-                    (sig.market_id, sig.signal_type, f"-{dedup_minutes}"),
-                )
-                if existing:
-                    self.logger.debug(
-                        "Dedup: skipping %s/%s (window=%dmin)",
-                        sig.market_id, sig.signal_type, dedup_minutes,
-                    )
-                    continue  # Avoid duplicate signals within dedup window
+                if sig.market_id in open_market_ids:
+                    skipped_open += 1
+                    continue
+
+                if (sig.market_id, sig.signal_type) in recent_keys:
+                    skipped_dedup += 1
+                    continue
 
                 await self._db.execute(
                     """INSERT INTO signals
                        (market_id, signal_type, confidence, ev_estimate,
                         status, detection_modes_triggered, reasoning,
-                        direction, source_pipeline)
-                       VALUES (?, ?, ?, ?, 'PENDING', ?, ?, ?, ?)""",
+                        direction, source_pipeline, timeframe)
+                       VALUES (?, ?, ?, ?, 'PENDING', ?, ?, ?, ?, ?)""",
                     (
                         sig.market_id,
                         sig.signal_type,
@@ -292,8 +331,11 @@ class BasePipeline(ABC):
                         sig.reasoning,
                         sig.direction,
                         self.PIPELINE_NAME,
+                        sig.timeframe or None,
                     ),
                 )
+                # Track for intra-batch dedup
+                recent_keys.add((sig.market_id, sig.signal_type))
                 written += 1
             except Exception as e:
                 self.logger.error(
@@ -301,6 +343,11 @@ class BasePipeline(ABC):
                 )
         if written:
             await self._db.commit()
+        if skipped_open or skipped_dedup:
+            self.logger.info(
+                "Signal dedup: %d open-position, %d recent-signal skipped",
+                skipped_open, skipped_dedup,
+            )
         return written
 
     # ── Utility Methods ──────────────────────────────────────────────
@@ -317,42 +364,40 @@ class BasePipeline(ABC):
         data_implied_probability: float,
         market_price: float,
         half_spread: float = 0.0,
+        fee_per_contract: float = 0.014,
+        fee_multiplier: float = 2.0,
     ) -> tuple[float, str, float]:
         """Compute trading edge between data-implied probability and market price.
 
         Sprint 22: Added half_spread parameter to account for execution costs.
-        When half_spread > 0, EV is reduced by the cost of crossing the spread.
-        This prevents the model from seeing phantom edge on thin orderbooks
-        where the spread consumes the entire theoretical profit.
+        Sprint 26: Added fee_per_contract to deduct Kalshi roundtrip fees from EV.
+        Sprint 27: Added fee_multiplier (default 2.0x) — edge must exceed 2x the
+        fee to be considered positive EV. Provides a safety margin above raw cost.
 
         Args:
             data_implied_probability: What the data says the probability should be (0-1).
             market_price:             Current market YES price (0-1).
-            half_spread:              Half the bid-ask spread (0-1).  For example,
-                                      if bid=0.48 ask=0.52, half_spread=0.02.
-                                      The EV is reduced by this amount to model
-                                      the cost of crossing the spread.
+            half_spread:              Half the bid-ask spread (0-1).
+            fee_per_contract:         Estimated roundtrip fee as fraction of $1 contract.
+                                      Default 0.014 (1.4%) for Kalshi taker fills.
+            fee_multiplier:           Multiplier on fee for safety margin.
+                                      Default 2.0 (edge must exceed 2.8% to trade).
 
         Returns:
             (edge_magnitude, direction, ev_estimate)
             - edge_magnitude: absolute size of the edge (0-1)
             - direction: "YES" if data says underpriced, "NO" if overpriced
-            - ev_estimate: expected value of the trade, net of spread cost
+            - ev_estimate: expected value of the trade, net of spread + fees
         """
         edge = data_implied_probability - market_price
+        fee_cost = fee_per_contract * fee_multiplier
 
         if edge > 0:
-            # Data says YES is underpriced → buy YES
             direction = "YES"
-            # EV: buy at market_price, expected payoff = data_implied_prob
-            # Sprint 22: Subtract half-spread — actual fill is at ask, not mid
-            ev = data_implied_probability - market_price - half_spread
+            ev = data_implied_probability - market_price - half_spread - fee_cost
         else:
-            # Data says YES is overpriced → buy NO
             direction = "NO"
-            # EV: buy NO at (1-market_price), expected payoff = (1-data_implied_prob)
-            # Sprint 22: Subtract half-spread — actual fill is at bid, not mid
-            ev = (1.0 - data_implied_probability) - (1.0 - market_price) - half_spread
+            ev = (1.0 - data_implied_probability) - (1.0 - market_price) - half_spread - fee_cost
 
         edge_magnitude = abs(edge)
         return edge_magnitude, direction, ev

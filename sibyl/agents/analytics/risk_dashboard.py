@@ -135,7 +135,7 @@ class RiskDashboard(BaseAgent):
         # Log drawdown escalations
         if drawdown_level != "CLEAR":
             self.logger.warning(
-                "DRAWDOWN %s: %.1f%% from HWM ($%.2f → $%.2f)",
+                "DRAWDOWN %s: %.1f%% from HWM ($%.2f -> $%.2f)",
                 drawdown_level, drawdown_pct * 100, self._hwm, total_balance,
             )
 

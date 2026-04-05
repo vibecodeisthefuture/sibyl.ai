@@ -136,7 +136,40 @@ See: `Sprint20_Crypto_Pivot_Plan.docx` for full plan.
 - [ ] Confidence calibration: retrospective Brier score on live crypto outcomes
 - [ ] Evaluate re-enabling economics pipeline (was +$4.69 in Sprint 19)
 
-### Sprint 23+: Selective Category Re-Enablement
+### Sprint 24: Research-Driven Strategy Overhaul — COMPLETE (2026-03-28)
+
+Based on empirical analysis of 300K+ Kalshi contracts and $40M in arbitrage profits.
+
+- [x] Favorite-Longshot Bias filter: asymmetric edge scaling, 10c hard reject
+- [x] Bracket Sum Arbitrage: detect mispriced bracket groups, BRACKET_ARB signals
+- [x] Kalshi-side Order Book Imbalance: OBI from top 3 levels, timeframe-weighted
+- [x] Brier-Tiered Kelly: per-timeframe Kelly fractions (15min=0.20, hourly=0.25, daily=0.30)
+- [x] Maker Pricing: inside-spread posting for patient favorite trades
+- [x] Domain Calibration Offsets: per-category confidence adjustment (active on re-enablement)
+- [x] Batch signal dedup: 2 bulk queries + N inserts (cycle time 90s+ -> 2.1s)
+- [x] DB lock contention fix: busy_timeout 5s -> 30s, pipeline timeout 45s -> 90s
+- [x] 3 Sprint 24 bugs fixed: OBI field name, maker NO pricing, sqlite3.Row access
+
+### Live Test #3 — COMPLETE (2026-03-28)
+
+- [x] 37-minute live test (terminated early: capital starvation)
+- [x] Pipeline infrastructure validated: 34 cycles at 2.1s avg, 0 timeouts
+- [x] Root cause: no portfolio value awareness ($161 locked in positions, $8.79 cash)
+- [x] 5 orders placed (all resting), 2,076 order exceptions (insufficient balance)
+- [x] Post-test analysis report: `Sibyl_Live_Test_3_Report.md`
+- [x] All positions closed, balance recovered to $154.20
+
+### Sprint 25: Portfolio Value Awareness (NEXT)
+
+- [ ] Real-time portfolio value tracker (cash + position exposure from Kalshi API)
+- [ ] Pre-execution balance gate (check available cash before placing orders)
+- [ ] Mode transition guard (reset HWM/allocations on paper -> live switch)
+- [ ] Kalshi-source position reconciliation on startup (sync DB from Kalshi, not reverse)
+- [ ] UTF-8 log encoding fix (cp1252 suppresses exception tracebacks)
+- [ ] Live Test #4 during market hours
+
+### Sprint 26+: Selective Category Re-Enablement
+
 - [ ] Re-enable economics with its own risk profile (if crypto baseline profitable)
 - [ ] Re-enable weather with its own risk profile
 - [ ] Each category gets dedicated risk profile before re-enabling

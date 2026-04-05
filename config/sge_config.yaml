@@ -17,9 +17,9 @@ risk_policy:
   kelly_fraction: 0.30             # Sprint 22: aggressive scaling (was 0.25)
   min_ev_threshold: 0.015          # Sprint 22: +1.5% floor for more signals (was 0.02)
   min_confidence: 0.60             # Sprint 22: stakeholder ≥60% floor (was 0.55)
-  max_single_position_pct: 0.08   # Sprint 22: 8% per position for impact (was 5%)
-  max_platform_exposure_pct: 0.70  # Sprint 22: 70% Kalshi exposure (was 60%)
-  max_total_exposure_pct: 0.80     # Sprint 22: 80% total for aggressive scaling (was 70%)
+  max_single_position_pct: 0.12   # Live test #2: 12% per position for full scalability
+  max_platform_exposure_pct: 0.95  # Live test #2: near-full deployment
+  max_total_exposure_pct: 0.95     # Live test #2: near-full deployment
   circuit_breaker_drawdown_pct: 0.25   # Sprint 22: -25% engine drawdown (was -15%)
   daily_loss_limit_pct: 0.12       # Sprint 22: -12% daily loss (was -8%)
   per_market_stop_loss_pct: 0.35   # Sprint 22: wider stop for volatile crypto (was -25%)
@@ -42,6 +42,7 @@ signal_whitelist:
   - STALE_MARKET
   - HIGH_CONVICTION_ARB
   - BRACKET_MODEL              # Sprint 20.5: Always-On Bracket Trader signals
+  - BRACKET_ARB                # Sprint 24: Bracket sum arbitrage (research-backed)
 
 execution:
   style: "patient"                 # patient limit orders
@@ -51,7 +52,7 @@ execution:
 
 # Sprint 20: Crypto gets dominant allocation, all others locked to 0
 category_caps:
-  crypto: 0.60                     # 60% cap — crypto is the sole focus
+  crypto: 0.95                     # Live test #2: near-full capital deployment
   politics: 0.00                   # Disabled
   sports: 0.00                     # Disabled
   science_tech: 0.00               # Disabled
