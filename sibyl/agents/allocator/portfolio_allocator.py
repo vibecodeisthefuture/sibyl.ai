@@ -139,17 +139,26 @@ class PortfolioAllocator(BaseAgent):
         self._discrepancy_alert_pct = float(bsync.get("discrepancy_alert_pct", 0.02))
 
         # ── Sprint 23D: Use shared Kalshi client ─────────────────────────
-        if self._mode == "live":
-            from sibyl.clients.kalshi_client import get_shared_kalshi_client
-            shared = get_shared_kalshi_client(self.config)
-            if shared.is_authenticated:
-                self._kalshi_client = shared
-                self.logger.info("Portfolio Allocator using shared Kalshi client")
-            else:
+        # Always initialize the Kalshi client (paper + live) so startup sync works.
+        from sibyl.clients.kalshi_client import get_shared_kalshi_client
+        shared = get_shared_kalshi_client(self.config)
+        if shared.is_authenticated:
+            self._kalshi_client = shared
+            self.logger.info(
+                "Portfolio Allocator using shared Kalshi client (mode=%s)", self._mode
+            )
+        else:
+            if self._mode == "live":
                 self.logger.warning(
                     "Live mode but Kalshi credentials not set — "
                     "falling back to paper balance"
                 )
+
+        # ── Sprint 32: Startup balance sync from authoritative Kalshi source ──
+        # Always query the real Kalshi account at startup so system_state
+        # reflects the actual account state, not stale cached values.
+        # This also allows the risk_dashboard to set a correct HWM at startup.
+        await self._startup_sync_kalshi()
 
         # ── Load Blitz partition config (Sprint 14) ──────────────────────
         try:
@@ -349,6 +358,77 @@ class PortfolioAllocator(BaseAgent):
         )
 
     # ── Balance Sync ───────────────────────────────────────────────────
+
+    async def _startup_sync_kalshi(self) -> None:
+        """Sprint 32: Query Kalshi API at startup and write authoritative balance.
+
+        Runs unconditionally (paper + live) so system_state always reflects the
+        real account state before the first allocation cycle and before the risk
+        dashboard loads its HWM.  This prevents the stale-HWM DRAWDOWN HALT that
+        occurred when cached values from a previous session were orders of magnitude
+        higher than the real account (inflated paper balance era).
+
+        On failure the existing system_state values are left in place and a warning
+        is logged — the system can still start with the cached values.
+        """
+        if not (self._kalshi_client and self._kalshi_client.is_authenticated):
+            self.logger.warning(
+                "Startup Kalshi sync skipped — no authenticated client"
+            )
+            return
+
+        try:
+            pv = await self._kalshi_client.get_portfolio_value()
+            if pv is None:
+                self.logger.warning(
+                    "Startup Kalshi sync returned None — keeping cached system_state"
+                )
+                return
+
+            cash = round(pv["cash"], 2)
+            exposure = round(pv["position_exposure"], 2)
+            total = round(pv["total_value"], 2)
+
+            for key, val in [
+                ("portfolio_cash_available", str(cash)),
+                ("portfolio_position_exposure", str(exposure)),
+                ("portfolio_total_balance", str(total)),
+            ]:
+                await self.db.execute(
+                    "INSERT INTO system_state (key, value, updated_at) "
+                    "VALUES (?, ?, datetime('now')) "
+                    "ON CONFLICT(key) DO UPDATE SET value = ?, updated_at = datetime('now')",
+                    (key, val, val),
+                )
+            await self.db.commit()
+
+            # ── Reconcile open positions against Kalshi ───────────────────
+            # In paper mode, any position the DB thinks is OPEN must be
+            # reconciled against real Kalshi exposure.  If Kalshi shows $0
+            # exposure (all positions resolved), close all DB-open positions
+            # so the correlation tracker and dedup logic start clean.
+            if exposure == 0.0:
+                result = await self.db.execute(
+                    "UPDATE positions SET status = 'CLOSED', "
+                    "closed_at = datetime('now') WHERE status = 'OPEN'"
+                )
+                closed_count = result.rowcount if result else 0
+                if closed_count:
+                    await self.db.commit()
+                    self.logger.info(
+                        "Startup position reconcile: closed %d stale DB-open "
+                        "positions (Kalshi exposure=$0)",
+                        closed_count,
+                    )
+
+            self.logger.info(
+                "Startup Kalshi sync: cash=$%.2f, exposure=$%.2f, total=$%.2f",
+                cash, exposure, total,
+            )
+        except Exception:
+            self.logger.exception(
+                "Startup Kalshi sync failed — keeping cached system_state"
+            )
 
     async def _get_total_balance(self) -> float:
         """Get the total portfolio balance.

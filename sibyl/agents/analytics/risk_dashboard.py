@@ -97,6 +97,39 @@ class RiskDashboard(BaseAgent):
         )
         if hwm_row:
             self._hwm = float(hwm_row["value"])
+
+        # ── Sprint 32: Stale HWM detection ───────────────────────────────
+        # The HWM can become stale when the paper balance was previously
+        # inflated (cross-session P&L accumulation bug, fixed in Sprint 31).
+        # On startup, compare the stored HWM against the current portfolio
+        # balance.  If the HWM would immediately trigger CRITICAL drawdown
+        # AND is more than 3× the current balance, treat it as an artifact
+        # of the old inflated era and reset it to current balance.
+        balance_row = await self.db.fetchone(
+            "SELECT value FROM system_state WHERE key = 'portfolio_total_balance'"
+        )
+        if balance_row:
+            current_balance = float(balance_row["value"])
+            stale_multiplier = float(
+                rd.get("stale_hwm_reset_multiplier", 3.0)
+            )
+            if (
+                current_balance > 0
+                and self._hwm > current_balance * stale_multiplier
+            ):
+                self.logger.warning(
+                    "STALE HWM DETECTED: stored HWM=$%.2f is %.1fx current "
+                    "balance=$%.2f (threshold=%.1fx) — resetting HWM to "
+                    "current balance to prevent false CRITICAL drawdown",
+                    self._hwm, self._hwm / current_balance,
+                    current_balance, stale_multiplier,
+                )
+                self._hwm = current_balance
+                await self._write_state("risk_hwm", str(round(self._hwm, 2)))
+                await self._write_state("risk_drawdown_level", "CLEAR")
+                await self._write_state("risk_drawdown_pct", "0.0")
+                await self.db.commit()
+
         self.logger.info(
             "Risk Dashboard started (HWM=$%.2f, drawdown thresholds: "
             "warn=%.0f%%, caution=%.0f%%, critical=%.0f%%)",
@@ -117,6 +150,24 @@ class RiskDashboard(BaseAgent):
 
         if total_balance <= 0:
             return
+
+        # ── Sprint 32: Stale HWM guard (runs every cycle) ────────────────
+        # The allocator startup sync may complete AFTER the risk dashboard
+        # loads its HWM from DB, leaving a stale in-memory value.  Check
+        # on every cycle: if HWM is more than stale_multiplier× the current
+        # balance, it's an artifact of a previous inflated-balance era and
+        # must be reset before computing drawdown.
+        _stale_mult = float(
+            self._rdc.get("risk_dashboard", {}).get("stale_hwm_reset_multiplier", 3.0)
+        )
+        if self._hwm > total_balance * _stale_mult:
+            self.logger.warning(
+                "STALE HWM RESET: HWM=$%.2f is %.1fx current balance=$%.2f "
+                "(threshold=%.1fx) — resetting to current balance",
+                self._hwm, self._hwm / total_balance, total_balance, _stale_mult,
+            )
+            self._hwm = total_balance
+            await self._write_state("risk_hwm", str(round(self._hwm, 2)))
 
         # ── High-Water Mark update ───────────────────────────────────────
         if total_balance > self._hwm:
