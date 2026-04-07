@@ -14,6 +14,10 @@ PURPOSE:
     grounding. Both methods disable return_citations to focus on synthesis logic
     rather than citation tracking.
 
+    Optionally supports a Tavily extract pre-fetch step: when enabled, URLs
+    referenced in the synthesis prompt are first extracted via Tavily to pull
+    raw source content, enriching the grounding before Sonar synthesizes.
+
 PRICING (as of 2026-03):
     - Sonar:       $1/M input tokens, $1/M output tokens
     - No free tier. Pro subscribers get $5/mo API credit.
@@ -26,6 +30,7 @@ USAGE PATTERNS:
 
 AUTHENTICATION:
     PERPLEXITY_API_KEY env var. Never hardcoded or logged.
+    TAVILY_API_KEY env var (optional, for extract pre-fetch).
 """
 
 from __future__ import annotations
@@ -83,6 +88,7 @@ class SonarLLMClient:
         self._model: str = model
         self._daily_call_cap: int = daily_call_cap
         self._calls_today: int = 0
+        self._tavily_client: Any = None  # optional Tavily client for extract pre-fetch
 
     def initialize(self) -> bool:
         """Load API key and create HTTP client.
@@ -102,10 +108,22 @@ class SonarLLMClient:
                 "Content-Type": "application/json",
             },
         )
+
+        # Initialize optional Tavily client for extract pre-fetch
+        tavily_key = os.environ.get("TAVILY_API_KEY", "")
+        if tavily_key:
+            try:
+                from tavily import TavilyClient
+                self._tavily_client = TavilyClient(api_key=tavily_key)
+                logger.info("Tavily extract client initialized for Sonar pre-fetch")
+            except Exception:
+                logger.debug("Tavily client unavailable — extract pre-fetch disabled")
+
         logger.info(
-            "Sonar LLM client initialized (model=%s, daily_cap=%d)",
+            "Sonar LLM client initialized (model=%s, daily_cap=%d, tavily_extract=%s)",
             self._model,
             self._daily_call_cap,
+            "enabled" if self._tavily_client else "disabled",
         )
         return True
 
@@ -128,14 +146,56 @@ class SonarLLMClient:
         """Reset daily call counter (called at UTC midnight)."""
         self._calls_today = 0
 
-    async def synthesize_research(self, prompt: str) -> str | None:
+    async def tavily_extract_sources(self, urls: list[str], query: str = "") -> str:
+        """Pre-fetch source content via Tavily extract endpoint.
+
+        Used to enrich the synthesis prompt with raw source text before
+        passing to Sonar. Only active when TAVILY_API_KEY is configured.
+
+        Args:
+            urls:  List of URLs to extract content from (max 20).
+            query: Optional relevance query for chunk reranking.
+
+        Returns:
+            Concatenated extracted text, or empty string on failure.
+        """
+        if not self._tavily_client or not urls:
+            return ""
+
+        try:
+            import asyncio
+            response = await asyncio.to_thread(
+                self._tavily_client.extract,
+                urls=urls[:20],
+                query=query,
+                chunks_per_source=3,
+            )
+            results = response.get("results", [])
+            chunks = []
+            for r in results:
+                raw = r.get("raw_content") or r.get("text") or ""
+                if raw:
+                    chunks.append(raw[:500])
+            return "\n\n".join(chunks)
+        except Exception:
+            logger.debug("Tavily extract failed — proceeding without pre-fetch")
+            return ""
+
+    async def synthesize_research(
+        self, prompt: str, source_urls: list[str] | None = None,
+    ) -> str | None:
         """Send a structured synthesis prompt to Sonar and return text response.
 
         Used by BreakoutScout for multi-source synthesis of research summaries.
         Low temperature (0.1) for factual, structured output. No web grounding.
 
+        When source_urls are provided and Tavily is configured, a pre-fetch
+        step extracts raw content from those URLs and prepends it to the
+        prompt for richer grounding.
+
         Args:
-            prompt: The synthesis prompt (e.g., multi-source sentiment analysis).
+            prompt:      The synthesis prompt (e.g., multi-source sentiment analysis).
+            source_urls: Optional list of URLs to pre-fetch via Tavily extract.
 
         Returns:
             Text response from Sonar (typically JSON), or None if unavailable/error.
@@ -148,6 +208,15 @@ class SonarLLMClient:
                 "Daily Sonar call cap reached (%d)", self._daily_call_cap
             )
             return None
+
+        # Optional Tavily extract pre-fetch to enrich grounding
+        if source_urls:
+            extracted = await self.tavily_extract_sources(source_urls, query=prompt[:200])
+            if extracted:
+                prompt = (
+                    f"PRE-FETCHED SOURCE CONTENT:\n{extracted}\n\n"
+                    f"---\n\n{prompt}"
+                )
 
         # System prompt guides Sonar toward structured synthesis
         system_prompt = (
